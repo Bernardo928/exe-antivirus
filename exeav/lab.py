@@ -219,6 +219,10 @@ class AnalysisLab:
         self.vault = Vault(root or paths.lab_dir())
 
     def add_file(self, path: str, source: str = "manual") -> str:
+        import stat as _stat
+        st = os.stat(path)
+        if not _stat.S_ISREG(st.st_mode):  # FIFO, dispositivo, socket: ler travaria ou seria infinito
+            raise ValueError("Apenas arquivos comuns podem ser analisados.")
         with open(path, "rb") as f:
             data = f.read(512 * 1024 * 1024)
         return self.add_bytes(data, os.path.basename(path), os.path.abspath(path), source)

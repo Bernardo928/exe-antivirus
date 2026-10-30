@@ -11,6 +11,37 @@ from .engine.models import ScanResult
 from .vault import Vault
 
 
+_LINUX_SYSTEM_DIRS = ("/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/", "/usr/lib/", "/usr/lib64/", "/usr/lib32/",
+                      "/lib/", "/lib64/", "/lib32/", "/usr/libexec/", "/boot/", "/etc/", "/usr/share/")
+
+
+def _system_dirs() -> tuple[str, ...]:
+    if paths.IS_WINDOWS:
+        root = os.environ.get("SystemRoot", r"C:\Windows")
+        dirs = [root]
+        for v in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles"):
+            if os.environ.get(v):
+                dirs.append(os.environ[v])
+        return tuple(os.path.normcase(os.path.abspath(d)).rstrip("\\") + "\\" for d in dirs)
+    return _LINUX_SYSTEM_DIRS
+
+
+def protection_reason(path: str) -> str | None:
+    """Motivo para RECUSAR mexer em um arquivo essencial e íntegro do sistema (None = pode isolar).
+
+    Um arquivo de sistema adulterado (hash diferente do pacote / sem assinatura válida) continua
+    podendo ser isolado — é exatamente assim que uma infecção real se parece."""
+    from .engine import trust
+    for cand in {os.path.abspath(path), os.path.realpath(path)}:
+        n = os.path.normcase(cand)
+        if n.startswith(_system_dirs()):
+            ok, desc = trust.check(cand)
+            if ok:
+                return (f"Arquivo essencial do sistema e íntegro ({desc}). Ele não será isolado nem excluído para "
+                        "não danificar o sistema operacional.")
+    return None
+
+
 class Quarantine:
     def __init__(self, root: Path | None = None):
         self.vault = Vault(root or paths.quarantine_dir())
@@ -18,7 +49,15 @@ class Quarantine:
     def isolate(self, result: ScanResult) -> str:
         """Move o arquivo para a quarentena (cifrado) e remove o original."""
         path = result.path
+        lst = os.lstat(path)
+        if not (stat.S_ISREG(lst.st_mode) or stat.S_ISLNK(lst.st_mode)):
+            raise OSError("Apenas arquivos comuns podem ser isolados.")
         st = os.stat(path)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError("Apenas arquivos comuns podem ser isolados.")
+        reason = protection_reason(path)
+        if reason:
+            raise PermissionError(reason)
         meta = {
             "original_path": os.path.abspath(path),
             "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

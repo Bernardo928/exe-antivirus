@@ -155,6 +155,9 @@ def detect(head: bytes) -> str:
         return {b"WAVE": "wav", b"AVI ": "avi", b"WEBP": "webp"}.get(h[8:12], "binary")
     if h[4:8] == b"ftyp":
         return "mp4"
+    if h[:3] == b"\xef\xbb\xbf" or h[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        # marca de ordem de bytes (BOM): é texto, mesmo que os bytes lembrem um quadro de MP3
+        return "html" if _looks_html(decode_text(h) or "") else "script"
     if h[:3] == b"ID3" or (len(h) > 1 and h[0] == 0xFF and (h[1] & 0xE0) == 0xE0 and h[1] != 0xFF):
         return "mp3"
     if h[:4] == b"OggS":
@@ -179,11 +182,21 @@ def detect(head: bytes) -> str:
         return "bmp"
     txt = decode_text(h)
     if txt is not None:
-        low = txt[:4096].lower()
-        if "<html" in low or "<script" in low or "<hta:" in low or "<!doctype html" in low or "<svg" in low:
-            return "html"
-        return "script"
+        return "html" if _looks_html(txt) else "script"
     return "binary"
+
+
+def _looks_html(txt: str) -> bool:
+    low = txt[:4096].lower()
+    return any(k in low for k in ("<html", "<script", "<hta:", "<!doctype html", "<svg"))
+
+
+def disguised_text(data: bytes) -> bool:
+    """Arquivo com cabeçalho de mídia, mas cujo conteúdo é quase todo texto legível (script disfarçado)."""
+    body = data[16:16 + 8192]
+    if len(body) < 64 or b"\x00" in body:
+        return False
+    return _text_ratio(body) > 0.97 and body.count(b"\n") >= 1
 
 
 def script_language(text: str) -> str:

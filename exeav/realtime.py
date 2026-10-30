@@ -38,7 +38,7 @@ class _Handler(FileSystemEventHandler):
 
     def on_created(self, event):
         if not event.is_directory:
-            self.rt.enqueue(event.src_path)
+            self.rt.enqueue(event.src_path, modified=True)
 
     def on_modified(self, event):
         if not event.is_directory:
@@ -46,7 +46,7 @@ class _Handler(FileSystemEventHandler):
 
     def on_moved(self, event):
         if not event.is_directory:
-            self.rt.enqueue(event.dest_path)
+            self.rt.enqueue(event.dest_path, modified=True)
 
     def on_closed(self, event):
         if not event.is_directory:
@@ -231,7 +231,8 @@ class RealtimeProtection:
                         + (f" — processo suspeito: {top['name']} (PID {top['pid']})" if top else ""))
             if top and self.settings.realtime_kill_malicious_process and not top.get("self"):
                 try:
-                    psutil.Process(top["pid"]).suspend()
+                    from .system import processes
+                    processes.suspend(top["pid"])
                     info["suspended"] = True
                     history.log("bloqueio", f"Processo {top['name']} (PID {top['pid']}) SUSPENSO pelo escudo anti-ransomware")
                 except Exception:
@@ -279,10 +280,17 @@ class RealtimeProtection:
         try:
             p = psutil.Process(pid)
             exe = p.exe()
+            cmdline = p.cmdline()
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
             return
-        if not exe or not os.path.isfile(exe) or self.engine.exclusions.is_excluded(exe):
+        if not exe or self.engine.exclusions.is_excluded(exe):
             return
+        if os.path.isfile(exe):
+            self._check_exe(p, pid, exe)
+        if _is_interpreter(exe) and len(cmdline) > 1:
+            self._check_cmdline(p, pid, exe, cmdline)
+
+    def _check_exe(self, p, pid: int, exe: str) -> None:
         try:
             st = os.stat(exe)
         except OSError:
@@ -304,8 +312,79 @@ class RealtimeProtection:
             elif self.cache and not res.skipped:
                 self.cache.mark_clean(exe, st.st_size, st.st_mtime_ns, self.engine.version)
         elif verdict == MALICIOUS and self.settings.realtime_kill_malicious_process:
+            self._kill(pid, p, exe)
+
+    def _kill(self, pid: int, p, what: str) -> bool:
+        try:
+            from .system import processes
+            name = p.name()
+            processes.kill(pid)
+            history.log("bloqueio", f"Processo malicioso {name} (PID {pid}) encerrado", what)
+            return True
+        except Exception:
+            return False
+
+    def _check_cmdline(self, p, pid: int, exe: str, cmdline: list[str]) -> None:
+        """Interpretadores (bash, python, powershell, wscript...): verifica o script executado e o código
+        passado direto na linha de comando (ataques "sem arquivo")."""
+        try:
+            cwd = p.cwd()
+        except (psutil.Error, OSError):
+            cwd = ""
+        for arg in cmdline[1:8]:
+            if not arg or arg.startswith(("-", "/")) and not os.path.isabs(arg):
+                continue
+            path = arg if os.path.isabs(arg) else os.path.join(cwd, arg) if cwd else ""
             try:
-                p.kill()
-                history.log("bloqueio", f"Processo malicioso {p.name()} (PID {pid}) encerrado", exe)
+                if not path or not os.path.isfile(path) or self.engine.exclusions.is_excluded(path):
+                    continue
+                st = os.stat(path)
+            except (OSError, ValueError):
+                continue
+            key = (path, st.st_size, st.st_mtime_ns)
+            if key in self._scanned_exes:
+                verdict = self._scanned_exes[key]
+                if verdict == MALICIOUS and self.settings.realtime_kill_malicious_process:
+                    self._kill(pid, p, path)
+                continue
+            try:
+                res = self.engine.scan_file(path).result
             except Exception:
-                pass
+                continue
+            self.processes_checked += 1
+            self._scanned_exes[key] = res.verdict
+            if res.is_threat:
+                self._handle_threat(res, pids=[pid])
+                return
+        text = " ".join(cmdline)
+        if len(text) < 24:
+            return
+        key = ("cmd", hash(text))
+        if key in self._scanned_exes:
+            return
+        try:
+            res = self.engine.analyze(text.encode("utf-8", "replace"), ftype="script").result
+        except Exception:
+            return
+        self._scanned_exes[key] = res.verdict
+        if res.verdict == MALICIOUS:
+            res.path = f"[linha de comando do PID {pid}] {text[:300]}"
+            history.log("detecção", f"[Tempo real] {res.threat_name} na linha de comando ({res.score} pts)", res.path)
+            killed = self.settings.realtime_kill_malicious_process and self._kill(pid, p, exe)
+            res.action = "processo encerrado" if killed else "notificado"
+            if killed:
+                self.threats_blocked += 1
+            self.callback("threat", res)
+
+
+_INTERPRETERS = {"bash", "sh", "dash", "zsh", "ksh", "fish", "python", "python2", "python3", "perl", "ruby", "node",
+                 "nodejs", "php", "lua", "pwsh", "powershell", "powershell_ise", "wscript", "cscript", "mshta",
+                 "cmd", "java", "javaw", "osascript", "rundll32", "regsvr32", "msiexec"}
+
+
+def _is_interpreter(exe: str) -> bool:
+    name = os.path.basename(exe).lower()
+    if name.endswith(".exe"):
+        name = name[:-4]
+    name = name.rstrip("0123456789.")
+    return name in _INTERPRETERS

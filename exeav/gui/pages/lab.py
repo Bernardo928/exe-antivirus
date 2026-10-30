@@ -261,7 +261,26 @@ class LabPage(QWidget):
         if not p or not os.path.isfile(p):
             QMessageBox.information(self, "Quarentena", "O arquivo original não existe mais no local de origem.")
             return
-        if not confirm(self, "Quarentena", f"Isolar o arquivo original?\n\n{p}"):
+        from ...quarantine import protection_reason
+        reason = protection_reason(p)
+        if reason:
+            QMessageBox.warning(self, "Quarentena", reason)
+            return
+        try:
+            from ...util import sha256_file
+            changed = sha256_file(p) != self.rep["hashes"]["sha256"]
+        except OSError:
+            changed = False
+        if changed:
+            QMessageBox.warning(self, "Quarentena", "O arquivo no local original foi alterado depois da análise. "
+                                "Analise-o novamente antes de isolá-lo.")
+            return
+        if self.rep["verdict"] == "limpo":
+            msg = (f"Este arquivo foi considerado LIMPO.\n\n{p}\n\nIsolá-lo pode fazer um programa parar de "
+                   "funcionar. Deseja isolar mesmo assim?")
+        else:
+            msg = f"Isolar o arquivo original?\n\n{p}"
+        if not confirm(self, "Quarentena", msg):
             return
         from ...engine.models import ScanResult
         r = ScanResult(path=p, verdict=self.rep["verdict"], score=self.rep["score"],

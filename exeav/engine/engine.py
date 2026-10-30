@@ -18,7 +18,7 @@ import zlib
 from dataclasses import dataclass, field
 
 from .. import ENGINE_VERSION, config, paths, util
-from . import doc_analyzer, elf_analyzer, filetype, pe_analyzer, trust
+from . import deobfuscate, doc_analyzer, elf_analyzer, filetype, pe_analyzer, trust
 from .models import CLEAN, MALICIOUS, SUSPICIOUS, Indicator, ScanResult
 from .rules import USER_RULES_NAME, RuleSet
 from .signatures import SignatureDB
@@ -32,13 +32,19 @@ STRUCTURAL = {"pe.wx_section", "pe.high_entropy_code", "pe.empty_exec", "pe.pack
 STRUCTURAL_CAP = 30
 TRUST_BONUS = -40
 
+def _c(pattern: bytes, flags: int = 0) -> re.Pattern:
+    """Compila com quantificadores de espaço possessivos (imune a ReDoS)."""
+    from .rules import harden
+    return re.compile(harden(pattern.decode("latin-1")).encode("latin-1"), flags)
+
+
 PE_MARKERS = (b"This program cannot be run in DOS mode", b"This program must be run under Win32")
-_B64_RE = re.compile(rb"[A-Za-z0-9+/]{80,}={0,2}")
-_ENC_RE = re.compile(rb"\s[-/]e(?:nc?|ncodedcommand|ncodedc|ncoded|ncode)?\s+['\"]?([A-Za-z0-9+/=]{20,})", re.I)
-_CHARS_RE = re.compile(rb"(?:\[char\]\s*\(?\s*(\d{2,3})\s*\)?\s*[+,]?\s*){8,}", re.I)
-_FROMCC_RE = re.compile(rb"fromcharcode\s*\(\s*((?:\d{1,3}\s*,\s*){8,}\d{1,3})\s*\)", re.I)
+_B64_RE = _c(rb"[A-Za-z0-9+/]{80,}={0,2}")
+_ENC_RE = _c(rb"\s[-/]e(?:nc?|ncodedcommand|ncodedc|ncoded|ncode)?\s+['\"]?([A-Za-z0-9+/=]{20,})", re.I)
+_CHARS_RE = _c(rb"(?:\[char\]\s*\(?\s*(\d{2,3})\s*\)?\s*[+,]?\s*){8,}", re.I)
+_FROMCC_RE = _c(rb"fromcharcode\s*\(\s*((?:\d{1,3}\s*,\s*){8,}\d{1,3})\s*\)", re.I)
 _PRINTABLE = bytes(i if (32 <= i < 127 or i == 9) else 10 for i in range(256))
-_HEXBLOB_RE = re.compile(rb"(?:4d5a|4D5A)[0-9a-fA-F]{200,}")
+_HEXBLOB_RE = _c(rb"(?:4d5a|4D5A)[0-9a-fA-F]{200,}")
 
 
 @dataclass
@@ -134,6 +140,26 @@ class Engine:
                                               f"catalogada (fonte: {hit[1]}).", weight=100, severity="critica",
                                   evidence=[sha256], family=hit[0]))
 
+        try:
+            inds += self._by_type(data, ftype, an, depth, deep)
+        except RecursionError:
+            raise
+        except Exception as e:  # noqa: BLE001 — arquivo montado para quebrar o analisador não pode escapar
+            inds.append(Indicator(
+                id="gen.parser_crash", name="Estrutura que quebra analisadores", category="Estrutura",
+                description="O arquivo tem uma estrutura manipulada que faz o analisador do formato falhar — técnica "
+                            "usada para escapar de antivírus. As regras de conteúdo foram aplicadas mesmo assim.",
+                weight=15, severity="media", evidence=[f"{type(e).__name__}: {str(e)[:120]}"], family="Heur.Malformed"))
+            an.info.setdefault("erro de análise", f"{type(e).__name__}: {str(e)[:200]}")
+            target = "pe" if ftype.startswith("pe") else "elf" if ftype.startswith("elf") else "any"
+            inds += self.rules.run(self._strings_blob(data), target)
+        res.indicators = self._merge(inds)
+        self._finalize(res, path if depth == 0 else "")
+        return an
+
+    def _by_type(self, data: bytes, ftype: str, an: Analysis, depth: int, deep: bool) -> list[Indicator]:
+        """Análise específica do formato (estrutura + regras adequadas ao tipo)."""
+        inds: list[Indicator] = []
         if ftype.startswith("pe"):
             pinds, info = pe_analyzer.analyze(data, deep=deep)
             inds += pinds
@@ -155,7 +181,7 @@ class Engine:
             inds += oinds
             an.info, an.macro = info, macro
             if macro:
-                inds += self.rules.run(macro.encode("latin-1", "replace"), "macro")
+                inds += self._macro_rules(macro, an, depth)
             if "MSI" not in info.get("aplicativo", ""):
                 inds += self._embedded_pe(data, "documento")
         elif ftype == "ooxml":
@@ -163,7 +189,7 @@ class Engine:
             inds += oinds
             an.info, an.macro = info, macro
             if macro:
-                inds += self.rules.run(macro.encode("latin-1", "replace"), "macro")
+                inds += self._macro_rules(macro, an, depth)
             inds += self._scan_archive(data, ftype, an, depth, only_prefixes=("word/embeddings/", "xl/embeddings/",
                                                                              "ppt/embeddings/", "word/media/"))
         elif ftype == "pdf":
@@ -187,11 +213,32 @@ class Engine:
         elif ftype in filetype.MEDIA_TYPES:
             an.info = {"formato": filetype.DESCRIPTIONS.get(ftype, ftype)}
             inds += self._embedded_pe(data, "arquivo de mídia")
-        elif ftype == "binary" and len(data) <= 4 * 1024 * 1024:
-            inds += self.rules.run(self._strings_blob(data), "any")
-        res.indicators = self._merge(inds)
-        self._finalize(res, path if depth == 0 else "")
-        return an
+            if filetype.disguised_text(data):
+                # "imagem/áudio" com cabeçalho falso seguido de um script inteiro (confusão de tipo)
+                info = an.info
+                tinds = self._analyze_text(data, "script", an, depth)
+                an.info = {**info, **an.info, "atenção": "contém texto/script após um cabeçalho de mídia"}
+                if [i for i in tinds if i.weight > 0]:
+                    inds.append(Indicator(id="gen.disguised_script", name="Script disfarçado de arquivo de mídia",
+                                          category="Disfarce",
+                                          description="O arquivo começa com a assinatura de uma imagem/áudio, mas o "
+                                                      "resto é um script — truque para enganar antivírus que confiam "
+                                                      "no tipo do arquivo.", weight=20, severity="alta",
+                                          evidence=[ftype], family="Trojan.Disguised"))
+                inds += tinds
+        elif ftype == "binary":
+            inds += self.rules.run(self._strings_blob(data, limit=9 * 1024 * 1024), "any")
+        return inds
+
+    def _macro_rules(self, macro: str, an: Analysis, depth: int) -> list[Indicator]:
+        """Regras de macro sobre o código VBA original + desofuscado (Chr(), concatenação, StrReverse...)."""
+        norm = deobfuscate.normalize(macro)
+        raw = macro.encode("latin-1", "replace")
+        if norm != macro[:deobfuscate.MAX_CHARS]:
+            raw += b"\n'--normalized--\n" + norm.encode("utf-8", "replace")
+            an.decoded.append(norm[:20000])
+        decoded, inds = self._deobfuscate(raw, an, depth)
+        return inds + self.rules.run(raw + (b"\n" + decoded if decoded else b""), "macro")
 
     # ------------------------------------------------------------------ partes
     @staticmethod
@@ -200,7 +247,8 @@ class Engine:
 
         Binários enormes têm apenas o início e o fim inspecionados pelas regras (a análise
         estrutural e o hash continuam considerando o arquivo inteiro)."""
-        d = data if len(data) <= limit else data[:limit - 8 * 1024 * 1024] + b"\n" + data[-8 * 1024 * 1024:]
+        tail = limit // 3
+        d = data if len(data) <= limit else data[:limit - tail] + b"\n" + data[-tail:]
         blob = d.translate(_PRINTABLE)
         if wide:
             blob += b"\n" + d[0::2].translate(_PRINTABLE) + b"\n" + d[1::2].translate(_PRINTABLE)
@@ -218,10 +266,9 @@ class Engine:
                                   family="Trojan.Dropper")]
         return []
 
-    def _deobfuscate(self, raw: bytes, an: Analysis, depth: int) -> tuple[bytes, list[Indicator]]:
-        """Decodifica camadas de ofuscação (Base64, -EncodedCommand, [char], fromCharCode, gzip)."""
+    def _decode_once(self, raw: bytes) -> tuple[list[bytes], list[bytes]]:
+        """Uma passada de decodificação: Base64, -EncodedCommand, gzip, [char], fromCharCode, hexadecimal."""
         layers: list[bytes] = []
-        inds: list[Indicator] = []
         payloads: list[bytes] = []
         for m in _ENC_RE.finditer(raw[:4 * 1024 * 1024]):
             try:
@@ -234,7 +281,7 @@ class Engine:
             if len(layers) > 10:
                 break
         for i, m in enumerate(_B64_RE.finditer(raw[:8 * 1024 * 1024])):
-            if i > 25:
+            if i > 60:
                 break
             blob = m.group()[:3 * 1024 * 1024]
             try:
@@ -253,6 +300,8 @@ class Engine:
                 if cand and _printable_ratio(cand) > 0.9:
                     layers.append(cand[:2 * 1024 * 1024])
                     break
+        text = raw[:4 * 1024 * 1024].decode("utf-8", "replace")
+        layers += [x.encode("utf-8", "replace") for x in deobfuscate.short_base64_layers(text)]
         for m in _CHARS_RE.finditer(raw[:4 * 1024 * 1024]):
             nums = re.findall(rb"\d{2,3}", m.group())
             layers.append(bytes(int(n) % 256 for n in nums))
@@ -266,6 +315,31 @@ class Engine:
                     payloads.append(dec)
             except ValueError:
                 pass
+        return layers, payloads
+
+    def _deobfuscate(self, raw: bytes, an: Analysis, depth: int) -> tuple[bytes, list[Indicator]]:
+        """Desfaz camadas de ofuscação de forma iterativa (até 4 níveis: ex. Base64 dentro de Base64)."""
+        inds: list[Indicator] = []
+        all_layers: list[bytes] = []
+        payloads: list[bytes] = []
+        seen: set[bytes] = {raw}
+        frontier = [raw]
+        for _round in range(4):
+            new: list[bytes] = []
+            for chunk in frontier:
+                layers, pls = self._decode_once(chunk)
+                payloads += pls
+                for lay in layers:
+                    txt = lay.decode("utf-8", "replace")
+                    norm = deobfuscate.normalize(txt)
+                    full = (txt + ("\n" + norm if norm != txt else "")).encode("utf-8", "replace")
+                    if full not in seen and len(all_layers) + len(new) < 40:
+                        seen.add(full)
+                        new.append(full)
+            all_layers += new
+            frontier = new
+            if not new:
+                break
         for p in payloads[:4]:
             if depth < 3:
                 sub = self.analyze(p, depth=depth + 1)
@@ -278,14 +352,15 @@ class Engine:
                     weight=max(40, sub.result.score), severity="alta",
                     evidence=[f"{sub.result.file_type} {util.human_size(len(p))}", sub.result.threat_name or "sem nome"],
                     family=sub.result.threat_name.replace("Heur.", "") if sub.result.threat_name else "Trojan.Dropper"))
-        if layers:
-            an.decoded.extend(x.decode("utf-8", "replace")[:20000] for x in layers[:20])
+        if all_layers:
+            an.decoded.extend(x.decode("utf-8", "replace")[:20000] for x in all_layers[:20])
             inds.append(Indicator(id="deobf.layer", name="Conteúdo ofuscado foi decodificado", category="Ofuscação",
                                   description="Parte do código estava codificada (Base64/char codes) e foi "
                                               "decodificada pelo antivírus para inspeção.",
-                                  weight=5, severity="baixa", evidence=[x[:100].decode("utf-8", "replace") for x in layers[:3]],
+                                  weight=5, severity="baixa",
+                                  evidence=[x[:100].decode("utf-8", "replace") for x in all_layers[:3]],
                                   family="Script.Obfuscated"))
-        return b"\n#--decoded--\n".join(layers), inds
+        return b"\n#--decoded--\n".join(all_layers), inds
 
     def _analyze_text(self, data: bytes, ftype: str, an: Analysis, depth: int) -> list[Indicator]:
         text = filetype.decode_text(data[:16 * 1024 * 1024])
@@ -294,13 +369,31 @@ class Engine:
         raw = text.encode("utf-8", "replace")
         an.info = {"formato": filetype.DESCRIPTIONS.get(ftype, ftype),
                    "linguagem": filetype.script_language(text), "linhas": text.count("\n") + 1,
-                   "codificação": "UTF-16" if data[:2] in (b"\xff\xfe", b"\xfe\xff") else "UTF-8/ASCII"}
-        decoded, inds = self._deobfuscate(raw, an, depth)
-        buf = raw + (b"\n#--decoded--\n" + decoded if decoded else b"")
+                   "codificação": "UTF-16" if data[:2] in (b"\xff\xfe", b"\xfe\xff") or data[1:2] == b"\x00"
+                   else "UTF-8/ASCII"}
+        normalized = deobfuscate.normalize(text)
+        inds: list[Indicator] = []
+        if normalized != text[:deobfuscate.MAX_CHARS]:
+            raw_norm = raw + b"\n#--normalized--\n" + normalized.encode("utf-8", "replace")
+            an.decoded.append(normalized[:20000])
+        else:
+            raw_norm = raw
+        decoded, dinds = self._deobfuscate(raw_norm, an, depth)
+        inds += dinds
+        buf = raw_norm + (b"\n#--decoded--\n" + decoded if decoded else b"")
         found = {i.id: i for i in self.rules.run(buf, "script")}
         if ftype == "html":
             for i in self.rules.run(buf, "html"):
                 found.setdefault(i.id, i)
+        if normalized != text[:deobfuscate.MAX_CHARS] and found:
+            plain = {i.id for i in self.rules.run(raw, "script")}
+            hidden = [i.name for k, i in found.items() if k not in plain and not k.startswith("deobf")]
+            if hidden:
+                inds.append(Indicator(id="deobf.hidden", name="Comandos escondidos por ofuscação", category="Ofuscação",
+                                      description="Comandos perigosos só aparecem depois de desfazer a ofuscação "
+                                                  "(circunflexos, crases, concatenação, códigos de caracteres...). "
+                                                  "Código legítimo não tem motivo para se esconder assim.",
+                                      weight=15, severity="media", evidence=hidden[:5], family="Script.Obfuscated"))
         inds += list(found.values())
         inds += self._embedded_pe(data, "texto/script")
         return inds
@@ -433,5 +526,7 @@ class Engine:
         cands = sorted((i for i in res.indicators if i.weight > 0 and i.family),
                        key=lambda i: (i.id in STRUCTURAL, -i.weight))
         fam = cands[0].family if cands else "Generic"
+        if fam == "EICAR-Test-File" or (cands and cands[0].id.startswith("arch.member") and "." not in fam):
+            return fam
         prefix = "Heur." if res.verdict == MALICIOUS else "Suspeito."
         return fam if fam.startswith(("Heur.", "Suspeito.")) else prefix + fam

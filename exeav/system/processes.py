@@ -40,17 +40,43 @@ def running_executables() -> list[str]:
     return out
 
 
-def kill(pid: int) -> None:
+CRITICAL_NAMES = {"system", "smss.exe", "csrss.exe", "wininit.exe", "winlogon.exe", "services.exe", "lsass.exe",
+                  "lsaiso.exe", "svchost.exe", "dwm.exe", "fontdrvhost.exe", "registry", "memory compression",
+                  "systemd", "init", "kthreadd", "launchd", "dbus-daemon", "xorg", "gnome-shell", "plasmashell"}
+
+
+def critical_reason(pid: int) -> str | None:
+    """Motivo para recusar encerrar/suspender um processo vital do sistema."""
     if pid == os.getpid():
-        raise PermissionError("O antivírus não pode encerrar a si mesmo.")
+        return "O antivírus não pode encerrar a si mesmo."
+    if pid <= 4:
+        return "Processo essencial do sistema operacional."
+    try:
+        p = psutil.Process(pid)
+        name = (p.name() or "").lower()
+        exe = p.exe() or ""
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+    if name in CRITICAL_NAMES:
+        from ..quarantine import protection_reason
+        if not exe or protection_reason(exe):
+            return f"'{p.name()}' é um processo essencial do sistema; encerrá-lo travaria o computador."
+    return None
+
+
+def kill(pid: int) -> None:
+    reason = critical_reason(pid)
+    if reason:
+        raise PermissionError(reason)
     p = psutil.Process(pid)
     p.kill()
     p.wait(timeout=5)
 
 
 def suspend(pid: int) -> None:
-    if pid == os.getpid():
-        raise PermissionError("O antivírus não pode suspender a si mesmo.")
+    reason = critical_reason(pid)
+    if reason:
+        raise PermissionError(reason)
     psutil.Process(pid).suspend()
 
 

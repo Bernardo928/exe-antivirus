@@ -4,7 +4,6 @@ from __future__ import annotations
 import multiprocessing
 import os
 import queue
-import sqlite3
 import stat
 import threading
 import time
@@ -55,10 +54,9 @@ class ScanCache:
     def __init__(self, path: Path | None = None):
         self.path = path or (paths.data_dir() / "scan_cache.db")
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(str(self.path), check_same_thread=False, timeout=30)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("CREATE TABLE IF NOT EXISTS cache (path TEXT PRIMARY KEY, size INTEGER, mtime INTEGER, "
-                           "version TEXT)")
+        from .db import open_db
+        self._conn = open_db(self.path, ["CREATE TABLE IF NOT EXISTS cache (path TEXT PRIMARY KEY, size INTEGER, "
+                                         "mtime INTEGER, version TEXT)"], wal=True)
         self._pending: list[tuple] = []
 
     def is_clean(self, path: str, size: int, mtime: int, version: str) -> bool:

@@ -55,6 +55,22 @@ def run_bg(fn, on_done=None, on_error=None) -> None:
     threading.Thread(target=work, daemon=True).start()
 
 
+class Debouncer(QObject):
+    """Agrupa muitos pedidos de atualização em uma só execução (evita travar a interface com rajadas de eventos)."""
+
+    def __init__(self, fn, delay_ms: int = 400, parent=None):
+        super().__init__(parent)
+        self._fn = fn
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(delay_ms)
+        self._timer.timeout.connect(fn)
+
+    def trigger(self, *_):
+        if not self._timer.isActive():
+            self._timer.start()
+
+
 # --------------------------------------------------------------------------- utilitários
 def open_location(path: str) -> None:
     folder = path if os.path.isdir(path) else os.path.dirname(path)

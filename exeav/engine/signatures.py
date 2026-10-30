@@ -18,9 +18,10 @@ class SignatureDB:
         self.path = path or (paths.data_dir() / "signatures.db")
         self._lock = threading.Lock()
         self._local = threading.local()
-        with self._conn() as c:
-            c.execute("CREATE TABLE IF NOT EXISTS hashes (hash TEXT PRIMARY KEY, name TEXT, source TEXT)")
-            c.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
+        from ..db import open_db
+        self._local.conn = open_db(self.path, [
+            "CREATE TABLE IF NOT EXISTS hashes (hash TEXT PRIMARY KEY, name TEXT, source TEXT)",
+            "CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)"])
         self._seed()
         self._refresh_stats()
 

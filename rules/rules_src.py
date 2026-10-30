@@ -105,9 +105,24 @@ RULES = [
                      "esconder o malware.",
          any=[r"set-mppreference[^\n]{0,80}-disable(?:realtimemonitoring|behaviormonitoring|ioavprotection|scriptscanning)\s+(?:\$true|1)",
               r"disablerealtimemonitoring[^\n]{0,30}(?:\$true|\b1\b|dword:0*1)",
-              r"add-mppreference[^\n]{0,40}-exclusion(?:path|process|extension)",
               r"windows defender\\(?:exclusions|real-time protection)",
               r"\bdisableantispyware\b[^\n]{0,40}(?:\b1\b|dword:0*1|\$true)"]),
+
+    dict(id="evasion.defender_exclusion", name="Exclui pastas inteiras da verificação do Defender",
+         category="Evasão de defesa", family="Trojan.DefenderKiller", severity="alta", weight=40, targets=["any"],
+         description="Cria exclusões amplas no Windows Defender (unidade inteira, Temp, AppData, perfil do usuário) "
+                     "para que o malware possa ficar ali sem ser verificado.",
+         any=[r"add-mppreference[^\n]{0,40}-exclusion(?:path|process)\s+[\"']?(?:[a-z]:\\?[\"']?(?:\s|$|;)|\$env:(?:temp|tmp|appdata|localappdata|userprofile|programdata)|c:\\users\\[^\\\n]{1,40}\\appdata)",
+              r"add-mppreference[^\n]{0,40}-exclusionextension\s+[\"']?\.?(?:exe|dll|ps1|bat|vbs|js)\b",
+              r"windows defender\\exclusions\\paths[^\n]{0,60}(?:[a-z]:\\\s|\\appdata|\\temp)"]),
+
+    dict(id="net.raw_ip_download", name="Download direto de endereço IP",
+         category="Downloader", family="Trojan.Downloader", severity="media", weight=20,
+         targets=["script", "html", "macro", "lnk"],
+         description="Baixa conteúdo de um endereço IP numérico em vez de um site com nome — servidores de "
+                     "malware frequentemente não têm domínio.",
+         any=[r"(?:downloadstring|downloadfile|downloaddata|invoke-webrequest|\biwr\b|invoke-restmethod|\birm\b|net\.webclient|start-bitstransfer|\bcurl\b|\bwget\b|xmlhttp|winhttp|urldownloadtofile|bitsadmin|certutil|fetch\s*\(|\.open\s*\(\s*[\"']get)[^\n]{0,200}(?:https?|ftp)://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?/",
+              r"(?:https?|ftp)://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?/[^\s'\"]{0,200}[^\n]{0,60}\|\s*(?:iex|invoke-expression|(?:ba)?sh\b)"]),
 
     dict(id="evasion.uac_bypass", name="Contorno do Controle de Conta (UAC bypass)",
          category="Elevação de privilégio", family="Trojan.UACBypass", severity="alta", weight=55,
@@ -289,6 +304,32 @@ RULES = [
          all=[r"(?:msxml2\.(?:server)?xmlhttp|microsoft\.xmlhttp|winhttp\.winhttprequest)",
               r"adodb\.stream|wscript\.shell|shell\.application"]),
 
+    dict(id="vbs.download_exec", name="Baixa, grava e executa um arquivo (VBScript/JScript)",
+         category="Downloader", family="Script.Dropper", severity="critica", weight=30,
+         targets=["script", "html", "macro"],
+         description="Faz o ciclo completo de um dropper: baixa um arquivo da internet, grava em disco e o executa.",
+         all=[r"msxml2\.(?:server)?xmlhttp|microsoft\.xmlhttp|winhttp\.winhttprequest|urldownloadtofile",
+              r"savetofile|\.write\s*\(?\s*\w+\.responsebody|createtextfile",
+              r"\.run\b|shellexecute|\.exec\b|win32_process"]),
+
+    dict(id="vbs.shell_run", name="Executa programas do sistema via WScript.Shell",
+         category="Execução", family="Script.Exec", severity="media", weight=25,
+         targets=["script", "html", "macro"],
+         description="Usa WScript.Shell para executar PowerShell/CMD/MSHTA e outros programas do sistema.",
+         all=[r"createobject\s*\(\s*[\"']wscript\.shell[\"']\s*\)"],
+         any=[r"\.run\s*\(?\s*[\"']?(?:%comspec%|cmd|powershell|pwsh|mshta|wscript|cscript|rundll32|regsvr32|bitsadmin|certutil|schtasks)",
+              r"\.exec\s*\(\s*[\"'](?:cmd|powershell|pwsh)"]),
+
+    dict(id="js.dynamic_exec", name="Execução dinâmica de código escondido",
+         category="Ofuscação", family="Script.Obfuscated", severity="alta", weight=30,
+         targets=["script", "html"],
+         description="Monta e executa código em tempo de execução (new Function, window['eval'], setTimeout com "
+                     "texto decodificado), forma comum de esconder código malicioso em páginas e scripts.",
+         any=[r"new\s+function\s*\(\s*(?:atob|unescape|decodeuricomponent|string\.fromcharcode)\s*\(",
+              r"(?:window|self|this|globalthis)\s*\[\s*[\"']eval[\"']\s*\]",
+              r"settimeout\s*\(\s*(?:atob|unescape|decodeuricomponent)\s*\(",
+              r"document\.write\s*\(\s*(?:unescape|atob|decodeuricomponent)\s*\("]),
+
     dict(id="js.eval_obfuscated", name="Execução de código ofuscado (eval)",
          category="Ofuscação", family="Script.Obfuscated", severity="media", weight=25,
          targets=["script", "html"],
@@ -321,6 +362,9 @@ RULES = [
          description="Executa comandos recebidos por requisições web ($_GET/$_POST) — porta dos fundos em servidores.",
          any=[r"(?:eval|assert|system|passthru|shell_exec|exec|popen|proc_open)\s*\(\s*(?:base64_decode\s*\(\s*|stripslashes\s*\(\s*|gzinflate\s*\(\s*)*\$_(?:get|post|request|cookie|server)",
               r"preg_replace\s*\(\s*[\"'][^\"']{0,40}/e[\"']",
+              r"\$\w{1,30}\s*\(\s*\$_(?:get|post|request|cookie)\s*\[",
+              r"\$_(?:get|post|request|cookie)\s*\[[^\]]{1,40}\]\s*\(\s*\$_(?:get|post|request|cookie)",
+              r"(?:system|passthru|shell_exec|exec|popen|proc_open|assert)\s*\(\s*\$_(?:get|post|request|cookie)",
               r"(?:eval|assert)\s*\(\s*(?:gzinflate|gzuncompress|str_rot13|base64_decode)\s*\(\s*(?:gzinflate|str_rot13|base64_decode)"]),
 
     # ------------------------------------------------------------------ Linux / Unix

@@ -15,10 +15,12 @@ _listeners: list = []
 def _db() -> sqlite3.Connection:
     global _conn
     if _conn is None:
-        _conn = sqlite3.connect(str(paths.data_dir() / "history.db"), check_same_thread=False, timeout=30)
-        _conn.execute("CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, "
-                      "kind TEXT, message TEXT, path TEXT)")
-        _conn.commit()
+        from .db import open_db
+        _conn = open_db(paths.data_dir() / "history.db",
+                        ["CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, "
+                         "kind TEXT, message TEXT, path TEXT)",
+                         "CREATE INDEX IF NOT EXISTS events_kind ON events(kind)",
+                         "PRAGMA synchronous=NORMAL"])
     return _conn
 
 

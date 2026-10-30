@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QComboBox, QFileDialog, QHBoxLayout, QLineEdit, QV
 
 from ... import history
 from .. import theme
-from ..widgets import Card, DataTable, PageHeader, button, confirm
+from ..widgets import Card, DataTable, Debouncer, PageHeader, button, confirm
 
 KINDS = ["Todos", "detecção", "quarentena", "bloqueio", "ransomware", "scan", "tempo real", "análise", "restauração",
          "exclusão", "recuperação", "backup", "inicialização", "assinaturas"]
@@ -46,7 +46,11 @@ class HistoryPage(QWidget):
             self.table.setColumnWidth(i, w)
         card.lay.addWidget(self.table)
         root.addWidget(card, 1)
-        ctx.bridge.history_event.connect(lambda *a: self.refresh() if self.isVisible() else None)
+        self._debounce = Debouncer(lambda: self.refresh() if self.isVisible() else None, 500, self)
+        ctx.bridge.history_event.connect(self._debounce.trigger)
+        self.search.textChanged.disconnect()
+        self._search_debounce = Debouncer(self.refresh, 250, self)
+        self.search.textChanged.connect(self._search_debounce.trigger)
 
     def _rows(self):
         k = self.kind.currentText()
@@ -55,9 +59,12 @@ class HistoryPage(QWidget):
         return [r for r in rows if not q or q in " ".join(r).lower()]
 
     def refresh(self, *_):
+        self.table.setUpdatesEnabled(False)
         self.table.clear_rows()
-        for ts, kind, msg, path in self._rows()[:3000]:
+        rows = self._rows()
+        for ts, kind, msg, path in rows[:1500]:
             self.table.add_row([ts, kind, msg, path], colors={1: COLORS.get(kind, theme.MUTED)})
+        self.table.setUpdatesEnabled(True)
 
     def export(self):
         dest, _ = QFileDialog.getSaveFileName(self, "Exportar histórico", "historico-exe-antivirus.csv")

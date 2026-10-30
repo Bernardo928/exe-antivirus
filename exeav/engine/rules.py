@@ -88,6 +88,19 @@ def _required(seq) -> frozenset | None:
     return _best(cands)
 
 
+_POSSESSIVE_OK = sys.version_info >= (3, 11)
+_WS_RE = re.compile(r"(?<!\\)((?:\\\\)*)(\\s[*+])(?![*+?])")
+
+
+def harden(pattern: str) -> str:
+    """Torna possessivos os '\\s*' e '\\s+' (nunca voltam atrás), eliminando ReDoS por espaços em branco.
+
+    Ex.: '(?:\\s*\\(?\\s*x)' com 200 mil espaços passaria de tempo quadrático para linear."""
+    if not _POSSESSIVE_OK or pattern.startswith("hex:"):
+        return pattern
+    return _WS_RE.sub(lambda m: m.group(1) + m.group(2) + "+", pattern)
+
+
 _WINDOW = 2048
 _WINDOW_MIN = 256 * 1024
 
@@ -103,7 +116,7 @@ class _Pat:
             self.rx = re.compile(re.escape(self.raw))
             self.anchors = None
             return
-        b = pattern.encode("utf-8")
+        b = harden(pattern).encode("utf-8")
         self.rx = re.compile(b, re.IGNORECASE)
         try:
             self.anchors = _required(_sp.parse(b, re.IGNORECASE))
@@ -193,8 +206,8 @@ class Rule:
                 return None
             evidence.append(_ev(m.group()))
         # 2) padrões alternativos
+        hits = 0
         if self.any:
-            hits = 0
             for rx in self.any:
                 m = rx.search(buf, low, present)
                 if m:
@@ -208,6 +221,7 @@ class Rule:
             if not m:
                 return None
             evidence.append(_ev(m.group()))
+        self._last_extra = max(0, hits - max(self.min, 1)) if self.any else 0
         return evidence
 
 
@@ -319,6 +333,10 @@ class RuleSet:
                 continue
             ev = r.match(buf, low, present)
             if ev is not None:
+                weight = r.weight
+                if r.severity in ("alta", "critica") and r.weight > 0:
+                    # várias técnicas diferentes da mesma família = evidência mais forte (até +20)
+                    weight += min(getattr(r, "_last_extra", 0), 2) * 10
                 out.append(Indicator(id=r.id, name=r.name, category=r.category, description=r.description,
-                                     weight=r.weight, severity=r.severity, evidence=ev, family=r.family))
+                                     weight=weight, severity=r.severity, evidence=ev, family=r.family))
         return out

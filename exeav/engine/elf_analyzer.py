@@ -121,6 +121,9 @@ def analyze(data: bytes, deep: bool = False) -> tuple[list[Indicator], dict]:
     exported: set[str] = set()
     secs = elf.sections
     for name, stype, flags, addr, off, size, link, _inf, _al, entsize in secs:
+        if stype not in (0, 8) and off >= len(data):
+            continue  # seção aponta para fora do arquivo (ELF manipulado/corrompido)
+        size = min(size, len(data) - off) if stype not in (0, 8) else size
         if stype == 2:
             has_symtab = True
         if stype not in (0, 8) and size and len(sections) < 200:
@@ -129,7 +132,7 @@ def analyze(data: bytes, deep: bool = False) -> tuple[list[Indicator], dict]:
                              "endereço virtual": hex(addr), "tamanho bruto": size,
                              "entropia": round(util.entropy(raw), 3) if raw else 0.0,
                              "permissões": ("A" if flags & 2 else "-") + ("W" if flags & 1 else "-") + ("X" if flags & 4 else "-")})
-        if stype == 6 and link < len(secs):  # DYNAMIC
+        if stype == 6 and link < len(secs) and size > 0:  # DYNAMIC
             stro = secs[link][4]
             fmt, step = (elf.e + "qQ", 16) if elf.is64 else (elf.e + "iI", 8)
             for i in range(0, min(size, 65536) - step + 1, step):
@@ -138,7 +141,7 @@ def analyze(data: bytes, deep: bool = False) -> tuple[list[Indicator], dict]:
                     break
                 if tag == 1:
                     needed.append(_cstr(data, stro + val))
-        if stype == 11 and link < len(secs):  # DYNSYM
+        if stype == 11 and link < len(secs) and size > 0:  # DYNSYM
             stro = secs[link][4]
             if elf.is64:
                 fmt, step = elf.e + "IBBHQQ", 24

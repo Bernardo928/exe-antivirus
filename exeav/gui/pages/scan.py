@@ -231,14 +231,18 @@ class ScanPage(QWidget):
                 self.ctx.quarantine.isolate(r)
                 r.action = "Em quarentena"
                 self.ctx.cache.forget(r.path)
+            except PermissionError as e:
+                r.action = "Protegido (sistema)" if "essencial" in str(e) else "Falha"
+                errors.append(f"{r.path}: {e}")
             except Exception as e:
                 r.action = "Falha"
                 errors.append(f"{r.path}: {e}")
             self._refresh_row(r)
         self.ctx.bridge.quarantine_changed.emit()
         if errors:
-            QMessageBox.warning(self, "Quarentena", "Alguns itens não puderam ser isolados (execute como "
-                                "administrador ou feche o programa que os usa):\n\n" + "\n".join(errors[:10]))
+            QMessageBox.warning(self, "Quarentena", "Alguns itens não puderam ser isolados (arquivo do sistema "
+                                "protegido, em uso por outro programa ou sem permissão — tente como "
+                                "administrador):\n\n" + "\n".join(errors[:10]))
 
     def send_to_lab(self):
         sel = self.table.selected_data()
@@ -272,12 +276,20 @@ class ScanPage(QWidget):
         if not sel or not confirm(self, "Excluir", f"Excluir DEFINITIVAMENTE {len(sel)} arquivo(s)? Esta ação não "
                                                    "pode ser desfeita (a quarentena é mais segura)."):
             return
+        from ...quarantine import protection_reason
         for r in sel:
+            reason = protection_reason(r.path)
+            if reason:
+                r.action = "Protegido (sistema)"
+                QMessageBox.warning(self, "Excluir", reason)
+                self._refresh_row(r)
+                continue
             try:
                 os.remove(r.path)
                 r.action = "Excluído"
+                self.ctx.cache.forget(r.path)
             except OSError as e:
-                r.action = f"Falha: {e.strerror}"
+                r.action = f"Falha: {e.strerror or e}"
             self._refresh_row(r)
 
 

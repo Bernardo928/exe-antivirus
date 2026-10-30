@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QScrollArea, QVBoxLayout
 
 from ... import VERSION, history
 from .. import theme
-from ..widgets import Card, DataTable, PageHeader, ShieldStatus, StatCard, button, label
+from ..widgets import Card, DataTable, Debouncer, PageHeader, ShieldStatus, StatCard, button, label
 
 
 class DashboardPage(QWidget):
@@ -88,9 +88,10 @@ class DashboardPage(QWidget):
         foot.setAlignment(Qt.AlignCenter)
         root.addWidget(foot)
 
-        ctx.bridge.history_event.connect(lambda *a: self.refresh() if self.isVisible() else None)
-        ctx.bridge.rt_event.connect(lambda *a: self.refresh() if self.isVisible() else None)
-        ctx.bridge.scan_finished.connect(lambda *a: self.refresh())
+        self._debounce = Debouncer(lambda: self.refresh() if self.isVisible() else None, 500, self)
+        ctx.bridge.history_event.connect(self._debounce.trigger)
+        ctx.bridge.rt_event.connect(self._debounce.trigger)
+        ctx.bridge.scan_finished.connect(self._debounce.trigger)
 
     def _scan(self, kind: str):
         self.ctx.bridge.navigate.emit("scan")
@@ -138,9 +139,11 @@ class DashboardPage(QWidget):
         self.s_lab.set(len(ctx.lab.items()))
         self.s_last.set(s.last_scan or "Nunca")
         self.s_sig.set(f"{len(ctx.engine.rules.rules)} + {ctx.sigdb.count:,}".replace(",", "."))
+        self.events.setUpdatesEnabled(False)
         self.events.clear_rows()
         colors = {"detecção": theme.DANGER, "quarentena": theme.WARNING, "bloqueio": theme.DANGER,
                   "ransomware": theme.DANGER, "scan": theme.ACCENT, "tempo real": theme.SUCCESS}
         for ts, kind, msg, path in history.recent(40):
             self.events.add_row([ts, kind, msg + (f" — {path}" if path else "")],
                                 colors={1: colors.get(kind, theme.MUTED)})
+        self.events.setUpdatesEnabled(True)
