@@ -1,0 +1,89 @@
+"""Inicialização da interface gráfica."""
+from __future__ import annotations
+
+import os
+import sys
+
+from PySide6.QtCore import QLockFile, Qt
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QApplication, QMessageBox
+
+from .. import APP_NAME, paths
+
+
+def run(argv: list[str]) -> int:
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ExeAntivirus.App")
+        except Exception:
+            pass
+    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    app = QApplication(argv)
+    app.setApplicationName(APP_NAME)
+    app.setOrganizationName("EXE")
+    app.setQuitOnLastWindowClosed(False)
+    f = QFont("Segoe UI" if sys.platform.startswith("win") else "Inter")
+    f.setStyleHint(QFont.SansSerif)
+    f.setPointSizeF(10)
+    app.setFont(f)
+
+    from . import icons, theme
+    app.setWindowIcon(icons.app_icon())
+    app.setStyleSheet(theme.QSS)
+
+    lock = QLockFile(str(paths.data_dir() / "instance.lock"))
+    lock.setStaleLockTime(0)
+    if not lock.tryLock(4000):
+        QMessageBox.information(None, APP_NAME, "O EXE Antivirus já está em execução (veja o ícone na bandeja do sistema).")
+        return 0
+
+    from .context import AppContext
+    from .main_window import MainWindow
+    ctx = AppContext()
+    win = MainWindow(ctx)
+    minimized = "--minimized" in argv or ctx.settings.start_minimized
+    if not (minimized and win.tray):
+        win.show()
+    if ctx.settings.realtime_enabled and os.environ.get("EXEAV_NO_REALTIME") != "1":
+        try:
+            ctx.realtime.start()
+        except Exception as e:  # nunca impedir a abertura do programa
+            win.statusBar().showMessage(f"Falha ao iniciar a proteção em tempo real: {e}")
+    win.pages["dashboard"].refresh()
+    code = app.exec()
+    ctx.shutdown()
+    lock.unlock()
+    return code
+
+
+def smoke_test(png_path: str) -> int:
+    """Abre a interface, percorre todas as abas, salva uma captura e sai (usado no CI)."""
+    from PySide6.QtCore import QEventLoop, QTimer
+    os.environ.setdefault("EXEAV_NO_REALTIME", "1")
+    app = QApplication([sys.argv[0]])
+    from . import icons, theme
+    app.setStyleSheet(theme.QSS)
+    app.setWindowIcon(icons.app_icon())
+    from .context import AppContext
+    from .main_window import NAV, MainWindow
+    ctx = AppContext()
+    win = MainWindow(ctx)
+    win.resize(1360, 860)
+    win.show()
+
+    def pump(ms):
+        loop = QEventLoop()
+        QTimer.singleShot(ms, loop.quit)
+        loop.exec()
+    for key, _t, _i in NAV:
+        win.go(key)
+        pump(150)
+    win.go("dashboard")
+    pump(300)
+    ok = win.grab().save(png_path)
+    ctx.shutdown()
+    win._really_quit = True
+    win.close()
+    print("SMOKE-TEST:", "OK" if ok else "FALHOU", png_path)
+    return 0 if ok else 1

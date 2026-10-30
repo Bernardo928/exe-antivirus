@@ -1,0 +1,73 @@
+name: Testes e build (Windows + Linux)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependências do sistema (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon-x11-0 libxcb-cursor0 libgl1
+
+      - name: Dependências Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Testes automatizados
+        run: python -m pytest -v
+
+      - name: Autoteste pelo código-fonte
+        run: python main.py --selftest
+
+      - name: Compilar (PyInstaller)
+        run: python tools/build.py --onefile
+
+      - name: Testar executável compilado (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:EXEAV_DATA_DIR = "$env:RUNNER_TEMP\exeav-data"
+          $p = Start-Process -FilePath "dist\ExeAntivirus\ExeAntivirus.exe" -ArgumentList "--selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "autoteste falhou: $($p.ExitCode)" }
+          $p = Start-Process -FilePath "dist\ExeAntivirus\ExeAntivirus.exe" -ArgumentList "--smoke-test","$env:RUNNER_TEMP\tela.png" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "teste da interface falhou: $($p.ExitCode)" }
+          Copy-Item "$env:RUNNER_TEMP\tela.png" dist\captura-windows.png
+          $exe = Get-ChildItem dist\*-portatil.exe | Select-Object -First 1
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "--selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "autoteste do portátil falhou: $($p.ExitCode)" }
+
+      - name: Testar executável compilado (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          export EXEAV_DATA_DIR=$RUNNER_TEMP/exeav-data
+          dist/ExeAntivirus/ExeAntivirus --selftest
+          dist/ExeAntivirus/ExeAntivirus --smoke-test dist/captura-linux.png
+          ./dist/*-portatil --selftest
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ExeAntivirus-${{ runner.os }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*-portatil*
+            dist/captura-*.png
+          if-no-files-found: error
