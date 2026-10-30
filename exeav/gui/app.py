@@ -30,7 +30,7 @@ def run(argv: list[str]) -> int:
 
     from . import icons, theme
     app.setWindowIcon(icons.app_icon())
-    app.setStyleSheet(theme.QSS)
+    app.setStyleSheet(theme.QSS + check_indicator_qss())
 
     lock = QLockFile(str(paths.data_dir() / "instance.lock"))
     lock.setStaleLockTime(0)
@@ -57,13 +57,24 @@ def run(argv: list[str]) -> int:
     return code
 
 
+def check_indicator_qss() -> str:
+    """Desenha a marca de seleção das caixas de seleção (QSS só aceita imagens em arquivo)."""
+    from . import icons
+    try:
+        p = paths.data_dir() / "ui-check.png"
+        icons.pixmap("check", "#ffffff", 14, 3.0).save(str(p), "PNG")
+        return "QCheckBox::indicator:checked { image: url(%s); }" % p.as_posix()
+    except Exception:
+        return ""
+
+
 def smoke_test(png_path: str) -> int:
     """Abre a interface, percorre todas as abas, salva uma captura e sai (usado no CI)."""
     from PySide6.QtCore import QEventLoop, QTimer
     os.environ.setdefault("EXEAV_NO_REALTIME", "1")
     app = QApplication([sys.argv[0]])
     from . import icons, theme
-    app.setStyleSheet(theme.QSS)
+    app.setStyleSheet(theme.QSS + check_indicator_qss())
     app.setWindowIcon(icons.app_icon())
     from .context import AppContext
     from .main_window import NAV, MainWindow

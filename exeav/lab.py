@@ -224,6 +224,9 @@ class AnalysisLab:
         return self.add_bytes(data, os.path.basename(path), os.path.abspath(path), source)
 
     def add_bytes(self, data: bytes, name: str, original_path: str = "", source: str = "manual") -> str:
+        existing = self.find_by_hash(hashlib.sha256(data).hexdigest())
+        if existing:  # a mesma amostra já está na Sala de Análise: reaproveita
+            return existing
         rep = build_report(self.engine, data, name, original_path)
         meta = {"name": name, "original_path": original_path, "source": source,
                 "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "size": len(data),
