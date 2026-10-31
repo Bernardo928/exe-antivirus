@@ -6,6 +6,7 @@ import threading
 from PySide6.QtCore import QObject, Signal
 
 from .. import config, history
+from ..botnet import BotnetShield
 from ..engine.engine import Engine
 from ..engine.signatures import SignatureDB
 from ..lab import AnalysisLab
@@ -20,6 +21,7 @@ class Bridge(QObject):
     scan_threat = Signal(object)
     scan_finished = Signal(object)
     rt_event = Signal(str, object)
+    botnet_event = Signal(str, object)
     history_event = Signal(str, str, str, str)
     quarantine_changed = Signal()
     lab_changed = Signal(str)
@@ -38,9 +40,15 @@ class AppContext:
         self.quarantine = Quarantine()
         self.lab = AnalysisLab(self.engine)
         self.realtime = RealtimeProtection(self.engine, self.quarantine, self._rt_cb, self.cache)
+        self.botnet = BotnetShield(self.engine, self.quarantine, self._botnet_cb)
         self.scanner: Scanner | None = None
         self._scan_thread: threading.Thread | None = None
         history.add_listener(lambda *a: self.bridge.history_event.emit(*a))
+
+    def _botnet_cb(self, kind: str, data) -> None:
+        self.bridge.botnet_event.emit(kind, data)
+        if kind == "botnet":
+            self.bridge.quarantine_changed.emit()
 
     def _rt_cb(self, kind: str, data) -> None:
         self.bridge.rt_event.emit(kind, data)
@@ -81,11 +89,12 @@ class AppContext:
 
     def shutdown(self) -> None:
         self.stop_scan()
-        try:
-            if self.realtime.running:
-                self.realtime.stop()
-        except Exception:
-            pass
+        for svc in (self.realtime, self.botnet):
+            try:
+                if svc.running:
+                    svc.stop()
+            except Exception:
+                pass
         try:
             self.cache.flush()
         except Exception:

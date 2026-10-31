@@ -50,6 +50,11 @@ def run(argv: list[str]) -> int:
             ctx.realtime.start()
         except Exception as e:  # nunca impedir a abertura do programa
             win.statusBar().showMessage(f"Falha ao iniciar a proteção em tempo real: {e}")
+    if ctx.settings.botnet_shield and os.environ.get("EXEAV_NO_REALTIME") != "1":
+        try:
+            ctx.botnet.start()
+        except Exception as e:
+            win.statusBar().showMessage(f"Falha ao iniciar o escudo anti-botnet: {e}")
     win.pages["dashboard"].refresh()
     code = app.exec()
     ctx.shutdown()

@@ -14,6 +14,7 @@ qualquer nome, e um arquivo inofensivo chamado `virus.exe` continua limpo.
 | **Painel** | Estado da proteção, estatísticas, atalhos e atividade recente |
 | **Verificação** | Scan rápido (downloads, área de trabalho, temporários, inicialização e todos os processos em execução), scan completo (todos os discos), scan de pasta e de arquivos; pausar/parar; ações sobre os resultados |
 | **Tempo Real** | Monitor de arquivos (criados/alterados/movidos), monitor de processos (analisa cada programa executado, os scripts rodados por interpretadores e comandos passados direto na linha de comando — ataques "sem arquivo" — e pode encerrá-los), escudo anti-ransomware (detecta criptografia em massa e suspende o processo) |
+| **Anti-Botnet** | Impede que o PC vire parte de uma botnet: vigia a rede de cada programa e bloqueia conexão com servidores de comando (C2) conhecidos, varredura de outras máquinas para se espalhar (Telnet/SSH/SMB/RDP/ADB), ataques DDoS, contato periódico com servidor (beaconing), portas de IRC/trojans/Tor/mineração, backdoor aberto para a rede e programas rodando de pasta temporária, apagados do disco ou disfarçados de processo do sistema. Encerra o bot, isola o executável (ou o script, se rodar por um interpretador) e bloqueia o servidor de comando no firewall (Windows Firewall, nftables ou iptables). Lista de C2 atualizável (abuse.ch Feodo Tracker) ou importada |
 | **Quarentena** | Ameaças isoladas e **cifradas** (não executáveis); restaurar, restaurar em outro local, excluir, enviar para análise |
 | **Sala de Análise** | Recebe o arquivo do vírus (neutralizado) e mostra **por que** ele é vírus — cada evidência, seu peso e onde foi encontrada — e **todas as informações**: hashes (MD5/SHA-1/SHA-256/SHA-512), tipo real, entropia (com gráfico), cabeçalhos, seções, importações (APIs perigosas destacadas), exportações, recursos, informações de versão, certificados, strings (URLs, IPs, e-mails, registro, caminhos, carteiras bitcoin, .onion), macros VBA extraídas, conteúdo ofuscado decodificado, hex, conteúdo de compactados e técnicas **MITRE ATT&CK**. Exporta relatório HTML/JSON |
 | **Recuperação** | Encontra e repara arquivos corrompidos (ZIP/DOCX/XLSX/PPTX/ODT, PDF, PNG, JPEG, GIF, JSON, textos), identifica arquivos cifrados por ransomware e cria/restaura **backups protegidos** de pastas |
@@ -61,6 +62,7 @@ python main.py                 # interface gráfica
 python main.py --scan PASTA    # varredura pela linha de comando (--quarantine para isolar)
 python main.py --quick         # scan rápido sem interface
 python main.py --analyze ARQ   # relatório da Sala de Análise no terminal (--json)
+python main.py --botnet 10     # observa a rede por 10 s e lista comportamento de botnet (não age)
 python main.py --selftest      # autoteste
 ```
 

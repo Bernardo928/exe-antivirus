@@ -10,7 +10,7 @@ from .. import theme
 from ..widgets import Card, DataTable, Debouncer, PageHeader, button, confirm
 
 KINDS = ["Todos", "detecção", "quarentena", "bloqueio", "ransomware", "scan", "tempo real", "análise", "restauração",
-         "exclusão", "recuperação", "backup", "inicialização", "assinaturas"]
+         "exclusão", "recuperação", "backup", "inicialização", "assinaturas", "anti-botnet", "firewall"]
 COLORS = {"detecção": theme.DANGER, "bloqueio": theme.DANGER, "ransomware": theme.DANGER,
           "quarentena": theme.WARNING, "scan": theme.ACCENT, "tempo real": theme.SUCCESS, "análise": theme.INFO}
 

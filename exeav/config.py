@@ -47,6 +47,10 @@ class Settings:
     realtime_process_monitor: bool = True
     realtime_kill_malicious_process: bool = True
     ransomware_shield: bool = True
+    botnet_shield: bool = True
+    botnet_auto_kill: bool = True
+    botnet_firewall_block: bool = True
+    botnet_c2_url: str = "https://feodotracker.abuse.ch/downloads/ipblocklist.txt"
     auto_action: str = "quarantine"          # quarantine | notify
     sensitivity: str = "media"               # baixa | media | alta
     scan_archives: bool = True

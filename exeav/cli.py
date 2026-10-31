@@ -18,6 +18,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--analyze", metavar="ARQUIVO", help="mostra o relatório da Sala de Análise de um arquivo (JSON)")
     p.add_argument("--json", action="store_true", help="saída em JSON")
     p.add_argument("--selftest", action="store_true", help="executa o autoteste do motor e sai")
+    p.add_argument("--botnet", nargs="?", const=10, type=float, metavar="SEGUNDOS",
+                   help="observa a rede por alguns segundos e mostra programas com comportamento de botnet (não age)")
     p.add_argument("--minimized", action="store_true", help="inicia minimizado na bandeja")
     p.add_argument("--smoke-test", metavar="PNG", help=argparse.SUPPRESS)
     p.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
@@ -54,6 +56,32 @@ def run_scan(targets: list[str], quarantine: bool, as_json: bool, kind: str = "c
         print(f"\n{st.files} arquivo(s) verificado(s) em {st.elapsed:.1f}s · {len(st.threats)} ameaça(s) · "
               f"{st.from_cache} do cache · {st.skipped} ignorado(s)")
     return 1 if st.threats else 0
+
+
+def botnet_check(seconds: float, as_json: bool) -> int:
+    import time
+    from .botnet import BotnetShield
+    from .engine.engine import Engine
+    from .quarantine import Quarantine
+    sh = BotnetShield(Engine(), Quarantine(), dry_run=True, interval=1.0)
+    end = time.time() + max(1.0, seconds)
+    while time.time() < end:
+        sh.sample()
+        time.sleep(1.0)
+    reps = sh.evaluate()
+    if as_json:
+        print(json.dumps([{"pid": r.pid, "name": r.name, "exe": r.exe, "score": r.score, "verdict": r.verdict,
+                           "reasons": r.reasons(), "remote_ips": r.remote_ips[:20]} for r in reps], ensure_ascii=False))
+    else:
+        print(f"{sh.processes_watched} programa(s) usando a rede, {sh.connections_seen} conexão(ões) analisada(s), "
+              f"{len(sh.c2.ips)} servidor(es) C2 conhecido(s)")
+        for r in reps:
+            print(f"[{'BOT' if r.verdict == 'malicioso' else 'SUSPEITO':8}] {r.score:4d} pts  {r.name} (PID {r.pid})  {r.exe}")
+            for x in r.reasons():
+                print(f"              {x}")
+        if not reps:
+            print("Nenhum comportamento de botnet encontrado.")
+    return 1 if any(r.verdict == "malicioso" for r in reps) else 0
 
 
 def selftest() -> int:
@@ -114,6 +142,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.selftest:
         return selftest()
+    if args.botnet is not None:
+        return botnet_check(args.botnet, args.json)
     if args.analyze:
         from .engine.engine import Engine
         from .lab import build_report

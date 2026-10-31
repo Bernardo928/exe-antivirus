@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QLabel, 
 
 from .. import APP_NAME, VERSION, config, scanner
 from . import icons, theme
+from .pages.botnet import BotnetPage
 from .pages.dashboard import DashboardPage
 from .pages.history import HistoryPage
 from .pages.lab import LabPage
@@ -24,6 +25,7 @@ NAV = [
     ("dashboard", "Painel", "home"),
     ("scan", "Verificação", "search"),
     ("realtime", "Tempo Real", "activity"),
+    ("botnet", "Anti-Botnet", "network"),
     ("quarantine", "Quarentena", "lock"),
     ("lab", "Sala de Análise", "flask"),
     ("recovery", "Recuperação", "lifebuoy"),
@@ -79,7 +81,7 @@ class MainWindow(QMainWindow):
         self.nav_buttons: dict[str, QPushButton] = {}
         group = QButtonGroup(self)
         group.setExclusive(True)
-        factories = {"dashboard": DashboardPage, "scan": ScanPage, "realtime": RealtimePage,
+        factories = {"dashboard": DashboardPage, "scan": ScanPage, "realtime": RealtimePage, "botnet": BotnetPage,
                      "quarantine": QuarantinePage, "lab": LabPage, "recovery": RecoveryPage,
                      "processes": ProcessesPage, "startup": StartupPage, "network": NetworkPage,
                      "history": HistoryPage, "settings": SettingsPage}
@@ -108,6 +110,7 @@ class MainWindow(QMainWindow):
 
         ctx.bridge.navigate.connect(self._on_navigate)
         ctx.bridge.rt_event.connect(self._on_rt_event)
+        ctx.bridge.botnet_event.connect(self._on_botnet_event)
         ctx.bridge.scan_finished.connect(self._on_scan_finished)
         ctx.bridge.scan_threat.connect(lambda r: self.statusBar().showMessage(f"Ameaça encontrada: {r.threat_name} — {r.path}", 8000))
         self._setup_tray()
@@ -189,6 +192,15 @@ class MainWindow(QMainWindow):
             self.tray.setIcon(icons.status_icon(on))
             self.a_rt.setChecked(on)
             self.tray.setToolTip(f"{APP_NAME} — proteção {'ativa' if on else 'DESLIGADA'}")
+
+    def _on_botnet_event(self, kind, rep):
+        if kind == "botnet":
+            self.notify(f"BOTNET BLOQUEADA: {rep.family}",
+                        f"{rep.name} (PID {rep.pid}) — {rep.action}\n" + "; ".join(rep.reasons()[:3]))
+            self.statusBar().showMessage(f"[Anti-Botnet] {rep.name}: {rep.action}", 12000)
+        elif kind == "suspeito":
+            self.notify("Comportamento suspeito de bot", f"{rep.name} (PID {rep.pid}): " + "; ".join(rep.reasons()[:2]),
+                        critical=False)
 
     def _on_rt_event(self, kind, data):
         if kind == "status":
