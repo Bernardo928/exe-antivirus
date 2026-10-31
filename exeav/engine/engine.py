@@ -111,7 +111,8 @@ class Engine:
                     res.skipped = True
                     res.error = f"Maior que o limite de {self.settings.max_file_size_mb} MB"
                     return Analysis(res)
-                data = head + f.read()
+                f.seek(0)
+                data = f.read()  # leitura direta (concatenar com o cabeçalho duplicaria a memória)
         except OSError as e:
             res.error = f"Não foi possível ler: {e.strerror or e}"
             res.skipped = True

@@ -222,3 +222,50 @@ def test_lab_duplicate_points_to_latest_location(engine, tmp_path):
     i2 = lab.add_file(str(b))
     assert i1 == i2 and len(lab.items()) == 1
     assert lab.report(i1)["original_path"] == str(b) and lab.items()[0]["name"] == "outro_nome.exe"
+
+
+def test_real_ole_document_macro(engine):
+    an = engine.analyze(samples.macro_doc())
+    assert an.result.file_type == "ole" and "AutoOpen" in an.macro
+    assert an.info.get("aplicativo") == "Microsoft Word"
+    assert an.result.verdict == MALICIOUS
+
+
+def test_ole_with_cyclic_chain_is_fast(engine):
+    data = samples.build_ole({"WordDocument": b"x" * 2000, "Module1": b"y" * 1500}, cycle=True)
+    t = time.time()
+    engine.analyze(data, deep=True)
+    assert time.time() - t < 2
+
+
+def test_ole_hostile_headers_bounded(engine):
+    """Cabeçalhos OLE com contadores absurdos não podem estourar memória nem travar."""
+    import struct as _s
+    base = bytearray(samples.macro_doc())
+    for off, val in ((0x2C, 0xFFFFFFFF), (0x48, 0xFFFFFFFF), (0x38, 0), (0x30, 0), (0x3C, 0)):
+        b = bytearray(base)
+        _s.pack_into("<I", b, off, val)
+        t = time.time()
+        engine.analyze(bytes(b), deep=True)
+        assert time.time() - t < 3, hex(off)
+
+
+def test_scanner_survives_worker_crash(tmp_path, monkeypatch):
+    """Se um arquivo derruba o processo de análise, a varredura continua e o processo principal sobrevive."""
+    from exeav import config
+    from exeav import scanner as sc
+    from exeav.engine.engine import Engine
+    monkeypatch.setattr(sc, "_child_scan", samples.crashing_child_scan)
+    d = tmp_path / "pasta"
+    d.mkdir()
+    for i in range(6):
+        (d / f"ok{i}.txt").write_text("texto comum")
+    (d / "derruba.bin").write_bytes(b"x" * 100)
+    (d / "ameaca.com").write_bytes(samples.eicar())
+    s = config.Settings()
+    s.scan_processes = True
+    s.use_cache = False
+    st = sc.Scanner(Engine(s), "custom", [str(d)]).run()
+    assert st.files == 8
+    assert [os.path.basename(r.path) for r in st.threats] == ["ameaca.com"]
+    assert st.skipped >= 1

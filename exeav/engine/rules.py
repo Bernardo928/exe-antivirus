@@ -328,7 +328,11 @@ class RuleSet:
         present = None
         ac = self._automaton(target)
         if ac is not None:
-            present = {w for _end, w in ac.iter(low.decode("latin-1"))}
+            present = set()
+            step, overlap = 4 * 1024 * 1024, 256  # em blocos: evita uma cópia do buffer inteiro como texto
+            for i in range(0, max(len(low), 1), step):
+                chunk = low[max(0, i - overlap): i + step].decode("latin-1")
+                present.update(w for _end, w in ac.iter(chunk))
         for r in self.for_target(target):
             if present is not None and not r.possible(present):
                 continue

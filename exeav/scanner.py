@@ -15,6 +15,7 @@ from .engine.engine import Engine
 from .engine.models import CLEAN, ScanResult
 
 QUICK, FULL, CUSTOM = "quick", "full", "custom"
+BIG_FILE = 32 * 1024 * 1024
 KIND_NAMES = {QUICK: "Scan rápido", FULL: "Scan completo", CUSTOM: "Scan personalizado"}
 
 PSEUDO_FS = {"proc", "sysfs", "devtmpfs", "devpts", "cgroup", "cgroup2", "securityfs", "pstore", "bpf",
@@ -239,6 +240,8 @@ class Scanner:
             self._skip_dirs |= set(LINUX_SKIP)
         self._version = engine.version
         self._pool = None
+        self._pool_n = 0
+        self._big_sem = threading.BoundedSemaphore(1)
 
     def _make_pool(self, n: int):
         if not self.settings.scan_processes or (os.cpu_count() or 1) < 2 or len(self.targets) == 0:
@@ -253,6 +256,44 @@ class Scanner:
                                        initargs=(asdict(self.settings),))
         except Exception:
             return None
+
+    def _scan_in_pool(self, path: str) -> ScanResult:
+        """Analisa em um processo separado. Se o processo morrer (arquivo que derruba o analisador) ou
+        travar, o grupo de processos é recriado — a análise NUNCA é refeita no processo principal,
+        que é o da interface."""
+        from concurrent.futures import TimeoutError as FutureTimeout
+        from concurrent.futures.process import BrokenProcessPool
+        for _attempt in range(3):
+            pool = self._pool
+            if pool is None:
+                break
+            try:
+                return pool.submit(_child_scan, path).result(timeout=300)
+            except BrokenProcessPool:
+                self._replace_pool(pool)
+            except FutureTimeout:
+                self._replace_pool(pool)
+                return ScanResult(path=path, skipped=True,
+                                  error="Tempo de análise esgotado (arquivo gigantesco ou malformado)")
+            except RuntimeError:  # grupo encerrado no meio (parada da varredura)
+                break
+        history.log("análise", "Arquivo derrubou o processo de análise e foi ignorado (estrutura malformada)", path)
+        return ScanResult(path=path, skipped=True, error="O arquivo derrubou o processo de análise (estrutura malformada)")
+
+    def _replace_pool(self, broken) -> None:
+        with self._lock:
+            if self._pool is not broken or self._stop.is_set():
+                return
+            try:
+                broken.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+            for p in list(getattr(broken, "_processes", {}).values() or []):
+                try:
+                    p.kill()  # processo travado continuaria consumindo CPU/memória
+                except Exception:
+                    pass
+            self._pool = self._make_pool(self._pool_n)
 
     # ------------------------------------------------------------------ controle
     def stop(self) -> None:
@@ -273,6 +314,7 @@ class Scanner:
     def run(self) -> ScanStats:
         history.log("scan", f"{KIND_NAMES.get(self.kind, 'Scan')} iniciado", "; ".join(self.targets[:5]))
         n = self.settings.scan_threads or min(8, max(2, (os.cpu_count() or 2)))
+        self._pool_n = n
         self._pool = self._make_pool(n)
         # com processos, mais threads mantêm todos os núcleos ocupados enquanto outras esperam E/S
         workers = [threading.Thread(target=self._worker, daemon=True, name=f"scan-{i}")
@@ -401,26 +443,27 @@ class Scanner:
                 self._emit_progress()
 
     def scan_one(self, path: str) -> ScanResult:
-        st = None
-        if self.cache:
-            try:
-                st = os.stat(path)
-                if self.cache.is_clean(path, st.st_size, st.st_mtime_ns, self._version):
-                    return ScanResult(path=path, size=st.st_size, from_cache=True)
-            except OSError:
-                pass
+        try:
+            st = os.stat(path)
+        except OSError:
+            st = None
+        if self.cache and st is not None and self.cache.is_clean(path, st.st_size, st.st_mtime_ns, self._version):
+            return ScanResult(path=path, size=st.st_size, from_cache=True)
+        big = st is not None and st.st_size > BIG_FILE
+        if big:
+            self._big_sem.acquire()  # arquivos grandes um de cada vez: limita o pico de memória
         try:
             if self._pool is not None:
-                try:
-                    res = self._pool.submit(_child_scan, path).result(timeout=300)
-                except Exception:  # processo filho falhou/estourou o tempo: analisa aqui mesmo
-                    res = self.engine.scan_file(path).result
+                res = self._scan_in_pool(path)
             else:
                 res = self.engine.scan_file(path).result
         except MemoryError:
             res = ScanResult(path=path, skipped=True, error="Memória insuficiente")
         except Exception as e:  # nunca derrubar a varredura por um arquivo problemático
             res = ScanResult(path=path, skipped=True, error=f"Erro interno: {e}")
+        finally:
+            if big:
+                self._big_sem.release()
         if self.cache and st is not None and res.verdict == CLEAN and not res.skipped:
             self.cache.mark_clean(path, st.st_size, st.st_mtime_ns, self._version)
         return res

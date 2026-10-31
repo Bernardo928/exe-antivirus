@@ -39,7 +39,7 @@ qualquer nome, e um arquivo inofensivo chamado `virus.exe` continua limpo.
   modelo em DOCX, PDF com JavaScript/Launch (streams descompactados), RTF com exploit do Equation
   Editor, atalhos LNK maliciosos, executáveis escondidos em imagens/PDF.
 * **Compactados:** ZIP/JAR/APK/GZ/TAR com recursão e proteção contra zip bomb.
-* **71 regras comportamentais** (ransomware, mineradores, Mimikatz, stealers, UAC bypass, desativação
+* **73 regras comportamentais** (ransomware, mineradores, Mimikatz, stealers, UAC bypass, desativação
   do Defender, AMSI bypass, LOLBins, webshells, botnets IoT, wipers...). As regras são distribuídas
   ofuscadas (`exeav/data/rules.bin`), então o executável não contém padrões maliciosos em texto puro.
 * **Assinaturas por hash** em SQLite (EICAR incluído; atualização a partir de listas públicas como o
@@ -106,6 +106,10 @@ essenciais do sistema.
   suspensos, pois são usados por ransomware em script).
 * Um analisador de formato que falhe em um arquivo manipulado não faz o arquivo escapar: as regras de
   conteúdo são aplicadas mesmo assim.
+* A análise roda em processos separados: se um arquivo hostil derrubar ou travar um deles, o grupo é
+  recriado e a varredura continua — a análise nunca é repetida no processo da interface. Leitores de
+  formato (OLE, ZIP, ELF, PDF) têm limites de memória e detecção de ciclos.
+* Arquivos grandes (> 32 MB) são analisados um de cada vez, limitando o pico de memória.
 
 Os testes geram amostras **inofensivas** na hora (EICAR montado em tempo de execução, executáveis PE
 mínimos que só contêm `ret`, macros e scripts de exemplo) e verificam detecção, ausência de falsos

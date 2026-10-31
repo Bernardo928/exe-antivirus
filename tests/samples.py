@@ -178,3 +178,56 @@ def malicious_pdf() -> bytes:
             b"4 0 obj\n<< /Length " + str(len(js)).encode() + b" /Filter /FlateDecode >>\nstream\n" + js +
             b"\nendstream\nendobj\n5 0 obj\n<< /Type /Action /S /Launch /F (cmd.exe) >>\nendobj\n"
             b"trailer\n<< /Root 1 0 R >>\n%%EOF\n")
+
+
+def build_ole(streams: dict[str, bytes], cycle: bool = False) -> bytes:
+    """Monta um Compound File (OLE) válido e mínimo. cycle=True cria uma cadeia de setores circular."""
+    ss = 512
+    FREE, END, FATSECT = 0xFFFFFFFF, 0xFFFFFFFE, 0xFFFFFFFD
+    names = list(streams)
+    assert len(names) <= 3
+    fat = [FATSECT, END]  # setor 0 = FAT, setor 1 = diretório
+    data_secs = b""
+    starts = []
+    nxt = 2
+    for n in names:
+        blob = streams[n]
+        count = max(1, (len(blob) + ss - 1) // ss)
+        starts.append(nxt)
+        for k in range(count):
+            fat.append(nxt + k + 1 if k < count - 1 else END)
+        data_secs += blob.ljust(count * ss, b"\x00")
+        nxt += count
+    if cycle and len(fat) > 2:
+        fat[2] = 2  # o primeiro setor de dados aponta para si mesmo
+    fat += [FREE] * (128 - len(fat))
+
+    def entry(name, etype, start, size, right=0xFFFFFFFF, child=0xFFFFFFFF):
+        raw = name.encode("utf-16le") + b"\x00\x00"
+        return (raw.ljust(64, b"\x00") + struct.pack("<HBB", len(raw), etype, 1) +
+                struct.pack("<III", 0xFFFFFFFF, right, child) + b"\x00" * 16 + b"\x00" * 4 + b"\x00" * 16 +
+                struct.pack("<IQ", start, size))
+    dirs = entry("Root Entry", 5, END, 0, child=1 if names else 0xFFFFFFFF)
+    for i, n in enumerate(names):
+        dirs += entry(n, 2, starts[i], len(streams[n]), right=i + 2 if i + 1 < len(names) else 0xFFFFFFFF)
+    dirs = dirs.ljust(ss, b"\x00")
+    header = (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 16 + struct.pack("<HHHHH", 0x3E, 3, 0xFFFE, 9, 6) +
+              b"\x00" * 6 + struct.pack("<IIIIIIIII", 0, 1, 1, 0, 0, END, 0, END, 0))
+    header += struct.pack("<109I", 0, *([FREE] * 108))
+    assert len(header) == 512, len(header)
+    return header + struct.pack("<128I", *fat) + dirs + data_secs
+
+
+def macro_doc() -> bytes:
+    """Documento Word 97-2003 (OLE) com macro VBA maliciosa."""
+    return build_ole({"WordDocument": b"\xec\xa5" + b"\x00" * 600,
+                      "Module1": b"\x00" * 40 + ovba_compress_literal(MACRO)})
+
+
+def crashing_child_scan(path):
+    """Usado pelo teste de robustez: simula um arquivo que derruba o processo de análise."""
+    import os as _os
+    if path.endswith("derruba.bin"):
+        _os._exit(3)
+    from exeav.scanner import _child_scan
+    return _child_scan(path)

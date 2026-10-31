@@ -20,33 +20,41 @@ def _ind(id_, name, category, desc, weight, severity="media", evidence=None, fam
 
 # --------------------------------------------------------------------------- OLE / CFB
 class OLEFile:
-    """Leitor mínimo de Compound File Binary (documentos Office 97-2003, MSI, vbaProject.bin)."""
+    """Leitor mínimo de Compound File Binary (documentos Office 97-2003, MSI, vbaProject.bin).
+
+    Resistente a arquivos manipulados: cadeias de setores com ciclos, tamanhos absurdos e tabelas
+    gigantes são cortadas por limites de memória e de quantidade (nunca trava nem esgota a memória)."""
+
+    MAX_ENTRIES = 4096
 
     def __init__(self, data: bytes):
         if data[:8] != b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" or len(data) < 512:
             raise ValueError("não é OLE")
         self.data = data
-        self.sector_size = 1 << struct.unpack_from("<H", data, 0x1E)[0]
-        self.mini_size = 1 << struct.unpack_from("<H", data, 0x20)[0]
-        if self.sector_size not in (512, 4096):
+        shift = struct.unpack_from("<H", data, 0x1E)[0]
+        if shift not in (9, 12):
             raise ValueError("setor inválido")
+        self.sector_size = 1 << shift
+        self.mini_size = 64  # único valor válido na especificação
+        self.max_sectors = len(data) // self.sector_size + 1
         n_fat = struct.unpack_from("<I", data, 0x2C)[0]
         first_dir = struct.unpack_from("<I", data, 0x30)[0]
-        self.cutoff = struct.unpack_from("<I", data, 0x38)[0]
+        self.cutoff = min(struct.unpack_from("<I", data, 0x38)[0], 1 << 20)
         first_minifat = struct.unpack_from("<I", data, 0x3C)[0]
-        first_difat, n_difat = struct.unpack_from("<II", data, 0x44)
-        difat = [x for x in struct.unpack_from("<109I", data, 0x4C) if x < 0xFFFFFFFA]
-        sid, guard = first_difat, 0
+        first_difat, _n_difat = struct.unpack_from("<II", data, 0x44)
+        difat = [x for x in struct.unpack_from("<109I", data, 0x4C) if x < self.max_sectors]
+        sid, seen = first_difat, set()
         per = self.sector_size // 4
-        while sid < 0xFFFFFFFA and guard < max(n_difat, 1) + 1000:
+        while sid < self.max_sectors and sid not in seen and len(seen) < self.max_sectors:
+            seen.add(sid)
             sec = self._sector(sid)
             if len(sec) < self.sector_size:
                 break
             vals = struct.unpack_from(f"<{per}I", sec)
-            difat.extend(x for x in vals[:-1] if x < 0xFFFFFFFA)
+            difat.extend(x for x in vals[:-1] if x < self.max_sectors)
             sid = vals[-1]
-            guard += 1
-        difat = difat[:max(n_fat, 0) + 4096]
+        # setores de FAT distintos, no máximo o que cabe no arquivo
+        difat = list(dict.fromkeys(difat))[:min(max(n_fat, 1), self.max_sectors)]
         fat = []
         for s in difat:
             sec = self._sector(s)
@@ -54,10 +62,11 @@ class OLEFile:
                 fat.extend(struct.unpack_from(f"<{per}I", sec))
         self.fat = fat
         self.minifat = []
-        mf = self._chain_bytes(first_minifat, self.fat, self._sector) if first_minifat < 0xFFFFFFFA else b""
-        if mf:
-            self.minifat = list(struct.unpack_from(f"<{len(mf) // 4}I", mf))
-        dir_bytes = self._chain_bytes(first_dir, self.fat, self._sector)
+        if first_minifat < 0xFFFFFFFA:
+            mf = self._chain_bytes(first_minifat, self.fat, self._sector, len(data))
+            if mf:
+                self.minifat = list(struct.unpack_from(f"<{len(mf) // 4}I", mf))
+        dir_bytes = self._chain_bytes(first_dir, self.fat, self._sector, self.MAX_ENTRIES * 128)
         self.entries = []
         for i in range(0, len(dir_bytes) - 127, 128):
             e = dir_bytes[i:i + 128]
@@ -70,7 +79,7 @@ class OLEFile:
         self.ministream = b""
         if self.entries and self.entries[0][1] == 5:
             _, _, rstart, rsize = self.entries[0]
-            self.ministream = self._chain_bytes(rstart, self.fat, self._sector)[:rsize]
+            self.ministream = self._chain_bytes(rstart, self.fat, self._sector, min(rsize, len(data)))
 
     def _sector(self, sid: int) -> bytes:
         off = (sid + 1) * self.sector_size
@@ -80,28 +89,34 @@ class OLEFile:
         off = sid * self.mini_size
         return self.ministream[off:off + self.mini_size]
 
-    def _chain_bytes(self, start: int, table: list, reader) -> bytes:
+    def _chain_bytes(self, start: int, table: list, reader, limit: int) -> bytes:
+        """Segue a cadeia de setores até 'limit' bytes, parando em ciclos (cadeias manipuladas)."""
         out = []
-        sid, seen = start, 0
-        limit = len(table) + 1
-        while sid < len(table) and sid not in (ENDOFCHAIN, FREESECT) and seen < limit:
-            out.append(reader(sid))
+        got = 0
+        sid, seen = start, set()
+        while 0 <= sid < len(table) and sid not in seen and got < limit:
+            seen.add(sid)
+            b = reader(sid)
+            if not b:
+                break
+            out.append(b)
+            got += len(b)
             sid = table[sid]
-            seen += 1
-        return b"".join(out)
+        return b"".join(out)[:limit]
 
     def streams(self, max_total: int = 64 * 1024 * 1024):
         total = 0
         for name, etype, start, size in self.entries:
             if etype != 2:
                 continue
-            if size < self.cutoff:
-                raw = self._chain_bytes(start, self.minifat, self._mini)[:size]
-            else:
-                raw = self._chain_bytes(start, self.fat, self._sector)[:size]
-            total += len(raw)
-            if total > max_total:
+            want = min(size, max_total - total)
+            if want <= 0:
                 break
+            if size < self.cutoff:
+                raw = self._chain_bytes(start, self.minifat, self._mini, want)
+            else:
+                raw = self._chain_bytes(start, self.fat, self._sector, want)
+            total += len(raw) + 64  # cada fluxo conta, mesmo vazio (evita milhares de entradas)
             yield name, raw
 
 
