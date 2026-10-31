@@ -177,6 +177,7 @@ class Rule:
     any: list = field(default_factory=list)
     min: int = 1
     source: str = "builtin"
+    bonus: bool = False
 
     def __post_init__(self):
         # Pré-condição barata: conjuntos de âncoras que precisam estar presentes no conteúdo.
@@ -238,7 +239,7 @@ def _build(d: dict, source: str) -> Rule:
         weight=int(d.get("weight", 20)), targets=frozenset(d.get("targets", ["any"])),
         description=d.get("description", ""),
         all=[_compile(p) for p in d.get("all", [])], any=[_compile(p) for p in d.get("any", [])],
-        min=int(d.get("min", 1)), source=source,
+        min=int(d.get("min", 1)), source=source, bonus=bool(d.get("bonus", False)),
     )
 
 
@@ -334,7 +335,7 @@ class RuleSet:
             ev = r.match(buf, low, present)
             if ev is not None:
                 weight = r.weight
-                if r.severity in ("alta", "critica") and r.weight > 0:
+                if r.bonus and r.weight > 0:
                     # várias técnicas diferentes da mesma família = evidência mais forte (até +20)
                     weight += min(getattr(r, "_last_extra", 0), 2) * 10
                 out.append(Indicator(id=r.id, name=r.name, category=r.category, description=r.description,

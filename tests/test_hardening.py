@@ -52,6 +52,15 @@ LOOKALIKES = {
     "admin ps": b"Get-Service | Export-Csv s.csv\nInvoke-WebRequest -Uri https://example.com/r.csv -OutFile r.csv\n",
     "math": b"x^2 + y^2 = z^2\n" * 40,
     "html base64": b"<img src='data:image/png;base64," + base64.b64encode(b"\x89PNG" + bytes(range(256)) * 20) + b"'>",
+    # falsos positivos reais encontrados na varredura de 199 mil arquivos:
+    "README com instalação": (b"# Ferramenta\n\nUma ferramenta rapida para analisar seu codigo e encontrar problemas comuns.\n\n"
+                              b"## Instalacao\n\nNo Windows, execute o comando abaixo no PowerShell para instalar a versao mais recente:\n\n"
+                              b"```powershell\nirm https://example.com/install.ps1 | iex\n```\n\nNo Linux e no macOS use o script oficial:\n\n"
+                              b"```sh\ncurl -LsSf https://example.com/install.sh | sh\n```\n\nVeja a [documentacao](https://example.com/docs) "
+                              b"para todas as opcoes de configuracao disponiveis.\n\n- item um da lista de recursos\n- item dois da lista\n"),
+    "lista de palavras-chave": b"KEYWORDS = ['iex', 'irm', 'iwr', 'Invoke-Expression', 'Invoke-RestMethod', 'DownloadString', 'Net.WebClient']\n",
+    "runtime Go": b"// VirtualAlloc reserves memory for the heap.\nfunc newosproc(mp *m) {\n\tthandle := stdcall6(_CreateThread, 0, 0, abi.FuncPCABI0(tstart_stdcall), uintptr(unsafe.Pointer(mp)), 0, 0)\n}\n",
+    "stub de tipos": b"def GetAsyncKeyState(key: int) -> int: ...\ndef SetWindowsHookEx(idHook: int, lpfn, hMod, dwThreadId: int) -> int: ...\n",
 }
 
 
@@ -195,3 +204,9 @@ def test_ransomware_culprit_never_self_or_ancestors(engine, tmp_path):
     c = rt._culprit(0)
     assert c is None or c["pid"] not in _self_and_ancestors()
     assert os.getpid() in _self_and_ancestors() and os.getppid() in _self_and_ancestors()
+
+
+def test_onion_inside_identifier_is_not_onion(engine):
+    blob = b"\x7fELF\x02\x01\x01" + b"\x00" * 60 + b"decryption key\x00ciphertelnetlisten.onion\x00unexpected"
+    r = engine.analyze(blob).result
+    assert "ransom.note_binary" not in {i.id for i in r.indicators}

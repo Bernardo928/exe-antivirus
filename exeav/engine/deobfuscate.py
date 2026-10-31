@@ -168,3 +168,29 @@ def short_base64_layers(text: str, limit: int = 40) -> list[str]:
             if len(out) >= limit:
                 return out
     return out
+
+
+_MD_LINE = re.compile(r"^\s{0,3}(?:#{1,6}\s+\S|[-*+]\s+\S|\d{1,3}[.)]\s+\S|>\s|```|~~~|\|.*\|\s*$)")
+_MD_LINK = re.compile(r"\[[^\]\n]{1,120}\]\((?:https?://|#|\.{0,2}/)[^)\s]{1,300}\)")
+_WORD = re.compile(r"[A-Za-zÀ-ÿ]{2,}")
+
+
+def looks_like_documentation(text: str) -> bool:
+    """Documentação (Markdown, METADATA do PyPI, manuais): muitos marcadores de Markdown e prosa.
+
+    Decidido pelo CONTEÚDO, nunca pela extensão do arquivo."""
+    sample = text[:200_000]
+    lines = [ln for ln in sample.splitlines() if ln.strip()][:4000]
+    if len(lines) < 8:
+        return False
+    md = sum(1 for ln in lines if _MD_LINE.match(ln))
+    links = len(_MD_LINK.findall(sample))
+    fences = sample.count("```") + sample.count("~~~")
+    prose = 0
+    for ln in lines:
+        words = _WORD.findall(ln)
+        if len(words) >= 7 and sum(ln.count(c) for c in ";{}$=<>|&") <= 2:
+            prose += 1
+    if fences < 2 and md + links < 6:
+        return False
+    return prose / len(lines) >= 0.2 and (md + links) >= 4

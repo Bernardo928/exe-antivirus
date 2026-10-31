@@ -23,7 +23,7 @@ RULES = [
                      "mas todo antivírus deve detectá-la.",
          all=["hex:58354f2150254041505b345c505a58353428505e2937434329377d2445494341522d5354414e444152442d414e544956495255532d544553542d46494c452124482b482a"]),
 
-    dict(id="ransom.shadow_delete", name="Exclusão de cópias de sombra (Shadow Copies)",
+    dict(id="ransom.shadow_delete", bonus=True, name="Exclusão de cópias de sombra (Shadow Copies)",
          category="Ransomware", family="Ransom.ShadowWiper", severity="critica", weight=60, targets=["any"],
          description="Apaga as cópias de sombra do Windows, impedindo a restauração de arquivos. "
                      "É o primeiro passo de praticamente todo ransomware moderno.",
@@ -31,7 +31,7 @@ RULES = [
               r"win32_shadowcopy[^\n]{0,80}(?:delete|remove-wmiobject|\.delete\(\))",
               r"vssadmin(?:\.exe)?[\"'\s]+resize\s+shadowstorage[^\n]{0,60}maxsize=\s*401\s*mb"]),
 
-    dict(id="ransom.recovery_off", name="Desativa a recuperação do sistema",
+    dict(id="ransom.recovery_off", bonus=True, name="Desativa a recuperação do sistema",
          category="Ransomware", family="Ransom.RecoveryKiller", severity="alta", weight=40, targets=["any"],
          description="Desativa o modo de recuperação do Windows ou apaga backups (bcdedit / wbadmin).",
          any=[r"bcdedit(?:\.exe)?[^\n]{0,40}recoveryenabled\s+no", r"bcdedit(?:\.exe)?[^\n]{0,40}bootstatuspolicy\s+ignoreallfailures",
@@ -46,7 +46,7 @@ RULES = [
               r"seus\s+arquivos\s+(?:foram|est[aã]o)\s+(?:criptografados|bloqueados)",
               r"(?:decrypt(?:ion)?\s+(?:key|tool|software|program)|to\s+decrypt\s+(?:your\s+)?files)",
               r"(?:pay|send|transfer)[^\n]{0,60}(?:bitcoin|btc|monero|xmr)",
-              r"[a-z2-7]{56}\.onion|[a-z2-7]{16}\.onion",
+              r"(?<![a-z0-9])(?=[a-z2-7]*[2-7])(?:[a-z2-7]{56}|[a-z2-7]{16})\.onion\b",
               r"do\s+not\s+(?:try\s+to\s+)?(?:rename|modify|delete)\s+(?:the\s+)?encrypted\s+files"],
          min=2),
 
@@ -67,7 +67,7 @@ RULES = [
               r"kerberos::(?:golden|ptt)", r"privilege::debug", r"gentilkiwi"],
          min=2),
 
-    dict(id="cred.lsass_dump", name="Despejo de memória do LSASS",
+    dict(id="cred.lsass_dump", bonus=True, name="Despejo de memória do LSASS",
          category="Roubo de credenciais", family="HackTool.LsassDump", severity="alta", weight=50,
          targets=["any"],
          description="Usa comsvcs.dll MiniDump / procdump para copiar a memória do processo LSASS, que "
@@ -98,7 +98,7 @@ RULES = [
                      "exfiltração usado por stealers e keyloggers.",
          any=[r"discord(?:app)?\.com/api/webhooks/\d+", r"api\.telegram\.org/bot\d+:"]),
 
-    dict(id="evasion.defender", name="Desativa o Windows Defender",
+    dict(id="evasion.defender", bonus=True, name="Desativa o Windows Defender",
          category="Evasão de defesa", family="Trojan.DefenderKiller", severity="critica", weight=55,
          targets=["any"],
          description="Desliga a proteção em tempo real do Windows Defender ou cria exclusões para "
@@ -108,7 +108,7 @@ RULES = [
               r"windows defender\\(?:exclusions|real-time protection)",
               r"\bdisableantispyware\b[^\n]{0,40}(?:\b1\b|dword:0*1|\$true)"]),
 
-    dict(id="evasion.defender_exclusion", name="Exclui pastas inteiras da verificação do Defender",
+    dict(id="evasion.defender_exclusion", bonus=True, name="Exclui pastas inteiras da verificação do Defender",
          category="Evasão de defesa", family="Trojan.DefenderKiller", severity="alta", weight=40, targets=["any"],
          description="Cria exclusões amplas no Windows Defender (unidade inteira, Temp, AppData, perfil do usuário) "
                      "para que o malware possa ficar ali sem ser verificado.",
@@ -124,7 +124,7 @@ RULES = [
          any=[r"(?:downloadstring|downloadfile|downloaddata|invoke-webrequest|\biwr\b|invoke-restmethod|\birm\b|net\.webclient|start-bitstransfer|\bcurl\b|\bwget\b|xmlhttp|winhttp|urldownloadtofile|bitsadmin|certutil|fetch\s*\(|\.open\s*\(\s*[\"']get)[^\n]{0,200}(?:https?|ftp)://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?/",
               r"(?:https?|ftp)://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?/[^\s'\"]{0,200}[^\n]{0,60}\|\s*(?:iex|invoke-expression|(?:ba)?sh\b)"]),
 
-    dict(id="evasion.uac_bypass", name="Contorno do Controle de Conta (UAC bypass)",
+    dict(id="evasion.uac_bypass", bonus=True, name="Contorno do Controle de Conta (UAC bypass)",
          category="Elevação de privilégio", family="Trojan.UACBypass", severity="alta", weight=55,
          targets=["any"],
          description="Sequestra chaves de registro usadas por fodhelper/eventvwr/sdclt para executar "
@@ -133,7 +133,7 @@ RULES = [
               r"folder\\shell\\open\\command[^\n]{0,80}delegateexecute|delegateexecute[^\n]{0,80}folder\\shell",
               r"exefile\\shell\\runas\\command\\isolatedcommand"]),
 
-    dict(id="evasion.log_clear", name="Apaga logs de eventos",
+    dict(id="evasion.log_clear", bonus=True, name="Apaga logs de eventos",
          category="Evasão de defesa", family="Trojan.LogWiper", severity="media", weight=25,
          targets=["any"],
          description="Limpa os logs de eventos do Windows para apagar rastros.",
@@ -196,14 +196,14 @@ RULES = [
          any=[r"/c\s+ping\s+(?:127\.0\.0\.1|localhost|1\.1\.1\.1)\s+-n\s+\d+[^\n]{0,20}&\s*del\s",
               r"choice\s+/c\s+y\s+/n\s+/d\s+y\s+/t\s+\d+\s*&\s*del\s", r"timeout\s+/t\s+\d+[^\n]{0,20}&\s*del\s+[\"']?%"]),
 
-    dict(id="lolbin.certutil", name="Download via certutil/bitsadmin",
+    dict(id="lolbin.certutil", bonus=True, name="Download via certutil/bitsadmin",
          category="Downloader", family="Trojan.Downloader", severity="alta", weight=45, targets=["any"],
          description="Usa ferramentas legítimas do Windows (certutil, bitsadmin) para baixar arquivos da "
                      "internet sem chamar atenção.",
          any=[r"certutil(?:\.exe)?[^\n]{0,30}-urlcache[^\n]{0,20}-f\s", r"certutil(?:\.exe)?[^\n]{0,30}-(?:verifyctl|ping)[^\n]{0,30}https?:",
               r"bitsadmin(?:\.exe)?[^\n]{0,30}/transfer[^\n]{0,200}https?://"]),
 
-    dict(id="lolbin.proxyexec", name="Execução indireta por binários do sistema",
+    dict(id="lolbin.proxyexec", bonus=True, name="Execução indireta por binários do sistema",
          category="Downloader", family="Trojan.LOLBin", severity="alta", weight=50, targets=["any"],
          description="Executa código remoto via mshta, regsvr32 (Squiblydoo) ou rundll32 javascript.",
          any=[r"mshta(?:\.exe)?[\"'\s]+(?:https?://|vbscript:|javascript:)",
@@ -232,13 +232,32 @@ RULES = [
          any=[r"(?:powershell|pwsh)(?:\.exe)?[\"']?[^\n]{0,120}\s[-/]e(?:nc?|ncodedcommand|ncodedc|ncoded|ncode)?\s+[a-z0-9+/=]{24,}"]),
 
     dict(id="ps.download_exec", name="Baixa e executa código da internet (PowerShell)",
-         category="Downloader", family="PowerShell.Downloader", severity="alta", weight=50,
+         category="Downloader", family="PowerShell.Downloader", severity="alta", weight=30,
          targets=["script", "html", "macro", "lnk", "pe", "pdf"],
-         description="Baixa conteúdo da internet e o executa diretamente na memória (IEX + DownloadString), "
-                     "padrão de downloaders e loaders de malware.",
-         all=[r"\biex\b|invoke-expression|\|\s*&\s*\(|\.invoke\(\)"],
+         description="Baixa conteúdo da internet e o executa diretamente na memória (IEX + DownloadString). "
+                     "Também é usado por instaladores legítimos (ex.: 'irm https://... | iex'), por isso pesa "
+                     "mais quando a origem é insegura, ofuscada ou combinada com outras técnicas.",
+         all=[r"\biex\b|invoke-expression|\.invoke\(\)"],
          any=[r"downloadstring|downloaddata|downloadfile", r"invoke-webrequest|\biwr\b|invoke-restmethod|\birm\b",
               r"net\.webclient", r"start-bitstransfer", r"system\.net\.http"]),
+
+    dict(id="ps.download_exec_insecure", name="Executa código baixado de origem insegura",
+         category="Downloader", family="PowerShell.Downloader", severity="alta", weight=25,
+         targets=["script", "html", "macro", "lnk", "pdf"],
+         description="O código executado vem por HTTP sem criptografia ou de um endereço IP direto — "
+                     "instaladores legítimos usam HTTPS com o domínio do fabricante.",
+         all=[r"\biex\b|invoke-expression|\.invoke\(\)"],
+         any=[r"(?:downloadstring|downloaddata|downloadfile|invoke-webrequest|\biwr\b|invoke-restmethod|\birm\b|net\.webclient|start-bitstransfer)[^\n]{0,200}(?:http://(?!localhost|127\.)|https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"]),
+
+    dict(id="net.paste_site", name="Baixa de site de compartilhamento usado por malware",
+         category="Downloader", family="Trojan.Downloader", severity="alta", weight=25,
+         targets=["script", "html", "macro", "lnk", "pe"],
+         description="Busca conteúdo em serviços de colagem/compartilhamento anônimo (pastebin, transfer.sh, "
+                     "anexos do Discord, túneis ngrok...), muito usados para hospedar o estágio seguinte de malware.",
+         any=[r"pastebin\.com/raw|paste\.ee/r/|hastebin\.com/raw|rentry\.co/[^\s'\"]{1,40}/raw|ghostbin",
+              r"transfer\.sh/|temp\.sh/|file\.io/|anonfiles\.com|gofile\.io/d|catbox\.moe/",
+              r"cdn\.discordapp\.com/attachments/[^\s'\"]{10,200}\.(?:exe|dll|scr|ps1|bat|vbs|zip|rar)",
+              r"(?<![a-z0-9-])[a-z0-9-]{4,63}\.ngrok(?:-free)?\.(?:io|app)"]),
 
     dict(id="ps.hidden_bypass", name="PowerShell oculto contornando políticas",
          category="Evasão de defesa", family="PowerShell.Stealth", severity="media", weight=20,
@@ -270,7 +289,8 @@ RULES = [
          description="Aloca memória executável e cria uma thread nela (VirtualAlloc + CreateThread) a partir "
                      "de um script — carregamento de shellcode.",
          all=[r"virtualalloc", r"createthread|createremotethread|enumwindows|callwindowproc"],
-         any=[r"marshal\]::copy|rtlmovememory|memset|\[byte\[\]\]|chrw?\(|frombase64string|\\x[0-9a-f]{2}"]),
+         any=[r"marshal\]::copy|rtlmovememory|\[byte\[\]\]\s*\$|frombase64string",
+              r"add-type|\[dllimport\(|declare\s+(?:ptrsafe\s+)?function|getdelegateforfunctionpointer"], min=2),
 
     dict(id="ps.compressed_payload", name="Carga compactada e codificada",
          category="Ofuscação", family="Script.Packed", severity="media", weight=30,
@@ -293,8 +313,10 @@ RULES = [
     dict(id="script.keylog_api", name="Captura de teclado por script",
          category="Espionagem", family="Spyware.Keylogger", severity="alta", weight=35,
          targets=["script", "macro"],
-         description="Usa GetAsyncKeyState / ganchos de teclado a partir de um script.",
-         any=[r"getasynckeystate", r"setwindowshookex", r"pynput\.keyboard[^\n]{0,200}listener|keyboard\.on_press"]),
+         description="Usa GetAsyncKeyState / ganchos de teclado a partir de um script e grava ou envia o que foi digitado.",
+         any=[r"(?:add-type|\[dllimport\(|ctypes\.windll|declare\s+(?:ptrsafe\s+)?function)[\s\S]{0,600}?(?:getasynckeystate|setwindowshookex)",
+              r"(?:getasynckeystate|setwindowshookex)[\s\S]{0,600}?(?:add-type|\[dllimport\(|ctypes\.windll)",
+              r"pynput\.keyboard[\s\S]{0,1200}?(?:smtplib|requests\.post|webhook|ftplib)"]),
 
     # ------------------------------------------------------------------ VBS / JS / HTML
     dict(id="vbs.downloader", name="Downloader em VBScript/JScript",
@@ -345,10 +367,11 @@ RULES = [
          any=[r"new\s+activexobject\s*\(\s*[\"']wscript\.shell", r"getobject\s*\(\s*[\"']new:72c24dd5-d70a-438b-8a42-98424b88afb8"]),
 
     dict(id="html.smuggling", name="HTML smuggling",
-         category="Downloader", family="HTML.Smuggling", severity="alta", weight=40,
+         category="Downloader", family="HTML.Smuggling", severity="media", weight=25,
          targets=["html"],
          description="Monta um arquivo dentro do navegador a partir de Base64 e força o download, técnica "
-                     "usada para entregar malware passando por filtros de e-mail.",
+                     "usada para entregar malware passando por filtros de e-mail. (Também usado por páginas "
+                     "legítimas para exportar arquivos; pesa mais quando o conteúdo embutido é um executável.)",
          all=[r"atob\s*\(|base64", r"createobjecturl|mssaveoropenblob|mssaveblob", r"\.download\s*=|download="]),
 
     dict(id="html.hidden_iframe", name="IFrame invisível",
@@ -356,7 +379,7 @@ RULES = [
          description="Carrega uma página externa em um iframe invisível (redirecionamento/drive-by).",
          any=[r"<iframe[^>]{0,200}(?:width\s*=\s*[\"']?0[\"'\s>]|height\s*=\s*[\"']?0[\"'\s>]|display\s*:\s*none|visibility\s*:\s*hidden)[^>]{0,200}src\s*=\s*[\"']?https?:"]),
 
-    dict(id="php.webshell", name="Webshell PHP",
+    dict(id="php.webshell", bonus=True, name="Webshell PHP",
          category="Backdoor", family="PHP.WebShell", severity="critica", weight=70,
          targets=["script", "html"],
          description="Executa comandos recebidos por requisições web ($_GET/$_POST) — porta dos fundos em servidores.",
@@ -368,7 +391,7 @@ RULES = [
               r"(?:eval|assert)\s*\(\s*(?:gzinflate|gzuncompress|str_rot13|base64_decode)\s*\(\s*(?:gzinflate|str_rot13|base64_decode)"]),
 
     # ------------------------------------------------------------------ Linux / Unix
-    dict(id="nix.reverse_shell", name="Shell reverso",
+    dict(id="nix.reverse_shell", bonus=True, name="Shell reverso",
          category="Backdoor", family="Backdoor.ReverseShell", severity="critica", weight=75,
          targets=["script", "elf", "macro", "html"],
          description="Conecta-se a um servidor remoto e entrega um terminal do seu sistema ao atacante.",
@@ -438,7 +461,7 @@ RULES = [
          description="Usa chattr +i/-i em arquivos do sistema (cron, ssh, binários) para impedir sua remoção.",
          any=[r"chattr\s+[-+]i[a]?\s+[^\n]{0,80}(?:/etc/|/root/|/tmp/|/usr/bin/|authorized_keys|cron)"]),
 
-    dict(id="nix.kill_competitors", name="Encerra mineradores concorrentes / segurança",
+    dict(id="nix.kill_competitors", bonus=True, name="Encerra mineradores concorrentes / segurança",
          category="Minerador", family="Linux.CoinMiner", severity="alta", weight=35,
          targets=["script", "elf"],
          description="Mata processos de outros mineradores ou de ferramentas de segurança, comportamento "
@@ -455,7 +478,7 @@ RULES = [
               r"(?:udpflood|tcpflood|httpflood|synflood|ackflood|greflood|hex-flood|std-flood)",
               r"\bscanner_init\b|\battack_init\b|\bkiller_init\b", r"POST /cdn-cgi/"], min=2),
 
-    dict(id="nix.rm_root", name="Destruição do sistema de arquivos",
+    dict(id="nix.rm_root", bonus=True, name="Destruição do sistema de arquivos",
          category="Destrutivo", family="Linux.Wiper", severity="critica", weight=70,
          targets=["script", "elf", "macro"],
          description="Apaga todo o sistema de arquivos ou sobrescreve o disco.",
@@ -464,7 +487,7 @@ RULES = [
               r"mkfs(?:\.\w+)?\s+(?:-f\s+)?/dev/(?:sd[a-z]|nvme|vd[a-z])[^\n]{0,20}(?:&&|;)",
               r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:"]),
 
-    dict(id="win.wiper", name="Destruição de dados no Windows",
+    dict(id="win.wiper", bonus=True, name="Destruição de dados no Windows",
          category="Destrutivo", family="Win.Wiper", severity="critica", weight=60, targets=["any"],
          description="Sobrescreve o MBR/disco físico ou apaga em massa os dados da unidade.",
          any=[r"cipher(?:\.exe)?\s+/w:\s*[a-z]:", r"format(?:\.com)?\s+[c-z]:\s+/(?:q|y)[^\n]{0,20}/(?:q|y)",

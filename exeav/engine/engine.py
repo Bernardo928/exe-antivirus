@@ -343,13 +343,15 @@ class Engine:
         for p in payloads[:4]:
             if depth < 3:
                 sub = self.analyze(p, depth=depth + 1)
+                if not filetype.is_executable_type(sub.result.file_type):
+                    continue  # começa com "MZ"/ELF mas não é um executável válido
                 sub.result.path = "(executável decodificado)"
                 an.members.append(sub.result)
                 inds.append(Indicator(
                     id="deobf.payload", name="Executável codificado dentro do script", category="Dropper",
                     description="O script carrega um programa inteiro escondido em Base64/hexadecimal, que é "
                                 "gravado em disco ou executado na memória.",
-                    weight=max(40, sub.result.score), severity="alta",
+                    weight=(max(40, sub.result.score) if sub.result.is_threat else 25), severity="alta",
                     evidence=[f"{sub.result.file_type} {util.human_size(len(p))}", sub.result.threat_name or "sem nome"],
                     family=sub.result.threat_name.replace("Heur.", "") if sub.result.threat_name else "Trojan.Dropper"))
         if all_layers:
@@ -387,13 +389,26 @@ class Engine:
                 found.setdefault(i.id, i)
         if normalized != text[:deobfuscate.MAX_CHARS] and found:
             plain = {i.id for i in self.rules.run(raw, "script")}
-            hidden = [i.name for k, i in found.items() if k not in plain and not k.startswith("deobf")]
+            hidden = [i.name for k, i in found.items() if k not in plain and not k.startswith("deobf")
+                      and i.severity in ("alta", "critica")]
             if hidden:
                 inds.append(Indicator(id="deobf.hidden", name="Comandos escondidos por ofuscação", category="Ofuscação",
                                       description="Comandos perigosos só aparecem depois de desfazer a ofuscação "
                                                   "(circunflexos, crases, concatenação, códigos de caracteres...). "
                                                   "Código legítimo não tem motivo para se esconder assim.",
                                       weight=15, severity="media", evidence=hidden[:5], family="Script.Obfuscated"))
+        if deobfuscate.looks_like_documentation(text):
+            # README/Markdown/manual: comandos citados como exemplo não são executados
+            an.info["documentação"] = "Sim (comandos citados como texto valem metade)"
+            for i in found.values():
+                if i.weight > 0 and i.id != "test.eicar":
+                    i.weight = i.weight // 2
+                    i.name += " (em documentação)"
+            inds = [i for i in inds if i.id != "deobf.hidden"]
+            inds.append(Indicator(id="doc.context", name="Conteúdo é documentação", category="Contexto",
+                                  description="O texto é documentação (Markdown/manual): comandos aparecem como "
+                                              "exemplos e não são executados. O veredito máximo é 'suspeito'.",
+                                  weight=0, severity="info", evidence=[], family=""))
         inds += list(found.values())
         inds += self._embedded_pe(data, "texto/script")
         return inds
@@ -507,6 +522,8 @@ class Engine:
                 score += 20
         res.score = max(0, score)
         susp, mal = self.settings.thresholds()
+        if not hard and any(i.id == "doc.context" for i in res.indicators):
+            res.score = min(res.score, mal - 1)
         if hard or res.score >= mal:
             res.verdict = MALICIOUS
         elif res.score >= susp:
