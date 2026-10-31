@@ -120,7 +120,7 @@ class SettingsPage(QWidget):
         self.archives.setChecked(s.scan_archives)
         f.addRow(self.archives)
         self.depth = QSpinBox()
-        self.depth.setRange(1, 5)
+        self.depth.setRange(1, 10)
         self.depth.setValue(s.archive_max_depth)
         f.addRow("Profundidade em compactados", self.depth)
         self.cache = QCheckBox("Cache inteligente: pula arquivos que não mudaram desde a última verificação")

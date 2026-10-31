@@ -13,7 +13,7 @@ qualquer nome, e um arquivo inofensivo chamado `virus.exe` continua limpo.
 |---|---|
 | **Painel** | Estado da proteção, estatísticas, atalhos e atividade recente |
 | **Verificação** | Scan rápido (downloads, área de trabalho, temporários, inicialização e todos os processos em execução), scan completo (todos os discos), scan de pasta e de arquivos; pausar/parar; ações sobre os resultados |
-| **Tempo Real** | Monitor de arquivos (criados/alterados/movidos), monitor de processos (analisa cada programa executado e pode encerrá-lo), escudo anti-ransomware (detecta criptografia em massa e suspende o processo) |
+| **Tempo Real** | Monitor de arquivos (criados/alterados/movidos), monitor de processos (analisa cada programa executado, os scripts rodados por interpretadores e comandos passados direto na linha de comando — ataques "sem arquivo" — e pode encerrá-los), escudo anti-ransomware (detecta criptografia em massa e suspende o processo) |
 | **Quarentena** | Ameaças isoladas e **cifradas** (não executáveis); restaurar, restaurar em outro local, excluir, enviar para análise |
 | **Sala de Análise** | Recebe o arquivo do vírus (neutralizado) e mostra **por que** ele é vírus — cada evidência, seu peso e onde foi encontrada — e **todas as informações**: hashes (MD5/SHA-1/SHA-256/SHA-512), tipo real, entropia (com gráfico), cabeçalhos, seções, importações (APIs perigosas destacadas), exportações, recursos, informações de versão, certificados, strings (URLs, IPs, e-mails, registro, caminhos, carteiras bitcoin, .onion), macros VBA extraídas, conteúdo ofuscado decodificado, hex, conteúdo de compactados e técnicas **MITRE ATT&CK**. Exporta relatório HTML/JSON |
 | **Recuperação** | Encontra e repara arquivos corrompidos (ZIP/DOCX/XLSX/PPTX/ODT, PDF, PNG, JPEG, GIF, JSON, textos), identifica arquivos cifrados por ransomware e cria/restaura **backups protegidos** de pastas |
@@ -31,13 +31,15 @@ qualquer nome, e um arquivo inofensivo chamado `virus.exe` continua limpo.
   anômalo, executáveis embutidos em recursos/overlay, disfarce de arquivo da Microsoft.
 * **Executáveis Linux (ELF):** parser próprio — UPX, segmentos RWX, rootkits LD_PRELOAD (funções
   interceptadas), shell reverso, injeção via ptrace.
-* **Scripts** (PowerShell, CMD, VBS, JS, HTA, Bash, Python, PHP): decodifica `-EncodedCommand`,
-  Base64, GZip, `[char]`, `fromCharCode` e executáveis embutidos antes de analisar.
+* **Scripts** (PowerShell, CMD, VBS, JS, HTA, Bash, Python, PHP): desofusca antes de analisar —
+  circunflexos/aspas/variáveis `SET` do CMD, crases, concatenação de strings, operador `-f`, `[char]`,
+  `Chr()`, `fromCharCode`, strings invertidas, `.Replace()`, `-EncodedCommand`, Base64 e GZip em até 4
+  camadas e executáveis embutidos.
 * **Documentos:** macros VBA (leitor OLE + descompressão MS-OVBA próprios), Follina/injeção de
   modelo em DOCX, PDF com JavaScript/Launch (streams descompactados), RTF com exploit do Equation
   Editor, atalhos LNK maliciosos, executáveis escondidos em imagens/PDF.
 * **Compactados:** ZIP/JAR/APK/GZ/TAR com recursão e proteção contra zip bomb.
-* **66 regras comportamentais** (ransomware, mineradores, Mimikatz, stealers, UAC bypass, desativação
+* **71 regras comportamentais** (ransomware, mineradores, Mimikatz, stealers, UAC bypass, desativação
   do Defender, AMSI bypass, LOLBins, webshells, botnets IoT, wipers...). As regras são distribuídas
   ofuscadas (`exeav/data/rules.bin`), então o executável não contém padrões maliciosos em texto puro.
 * **Assinaturas por hash** em SQLite (EICAR incluído; atualização a partir de listas públicas como o
@@ -86,6 +88,24 @@ push; os executáveis ficam nos *artifacts* da execução.
 ```bash
 python -m pytest
 ```
+
+Além dos testes de funcionalidade, `tests/test_hardening.py` cobre as regressões encontradas nos testes
+extremos: variantes ofuscadas de ameaças (circunflexos e `SET` no CMD, crases, concatenação e operador `-f` no
+PowerShell, `Chr()`/`[char]`, Base64 em várias camadas, ZIP aninhado, scripts UTF-16), arquivos legítimos
+parecidos (não podem dar falso positivo), resistência a ReDoS de todas as regras, fuzzing de arquivos
+malformados, bancos de dados corrompidos, configurações inválidas, FIFO e a proteção de arquivos e processos
+essenciais do sistema.
+
+### Proteções de segurança do próprio antivírus
+
+* Nunca isola, exclui ou suspende **arquivos essenciais e íntegros do sistema** (verificados pelo pacote no
+  Linux ou por assinatura digital no Windows), nem encerra processos críticos (PID 1, `csrss.exe`,
+  `lsass.exe`, `systemd`...), o próprio antivírus ou o programa que o iniciou.
+* O escudo anti-ransomware aponta o culpado pelo volume escrito **durante** o ataque (não pelo total
+  acumulado) e só suspende programas que não sejam do sistema/assinados (interpretadores de script podem ser
+  suspensos, pois são usados por ransomware em script).
+* Um analisador de formato que falhe em um arquivo manipulado não faz o arquivo escapar: as regras de
+  conteúdo são aplicadas mesmo assim.
 
 Os testes geram amostras **inofensivas** na hora (EICAR montado em tempo de execução, executáveis PE
 mínimos que só contêm `ret`, macros e scripts de exemplo) e verificam detecção, ausência de falsos

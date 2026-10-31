@@ -71,6 +71,8 @@ class RealtimeProtection:
         self._scanned_exes: dict[tuple, str] = {}
         self._mods: deque = deque()
         self._last_ransom_alert = 0.0
+        self._io_samples: deque = deque()
+        self._last_io_sample = 0.0
         self.files_scanned = 0
         self.threats_blocked = 0
         self.processes_checked = 0
@@ -186,7 +188,10 @@ class RealtimeProtection:
         if res.verdict == MALICIOUS:
             if self.settings.realtime_kill_malicious_process:
                 from .system import processes
+                protected = _self_and_ancestors()
                 for pid in pids or processes.processes_using(res.path):
+                    if pid in protected:
+                        continue
                     try:
                         processes.kill(pid)
                         action = "processo encerrado"
@@ -207,6 +212,12 @@ class RealtimeProtection:
         now = time.time()
         while self._mods and now - self._mods[0][0] > 15:
             self._mods.popleft()
+        if self._mods and now - self._last_io_sample >= 2.0:
+            # amostras de E/S por processo durante a atividade, para saber QUEM escreveu na janela do ataque
+            self._last_io_sample = now
+            self._io_samples.append((now, _io_snapshot()))
+            while self._io_samples and now - self._io_samples[0][0] > 30:
+                self._io_samples.popleft()
         if len(self._mods) < 15 or now - self._last_ransom_alert < 60:
             return
         candidates = {p for _t, p in self._mods if os.path.splitext(p)[1].lower() in DOC_EXT
@@ -225,11 +236,17 @@ class RealtimeProtection:
                     encrypted.append(p)
         if len(encrypted) >= 10:
             self._last_ransom_alert = now
-            top = self._top_writer()
+            enc_bytes = 0
+            for f in encrypted:
+                try:
+                    enc_bytes += os.path.getsize(f)
+                except OSError:
+                    pass
+            top = self._culprit(enc_bytes)
             info = {"files": encrypted[:20], "count": len(encrypted), "process": top}
             history.log("ransomware", f"Atividade de ransomware: {len(encrypted)} arquivos cifrados em 15s"
                         + (f" — processo suspeito: {top['name']} (PID {top['pid']})" if top else ""))
-            if top and self.settings.realtime_kill_malicious_process and not top.get("self"):
+            if top and top.get("can_suspend") and self.settings.realtime_kill_malicious_process:
                 try:
                     from .system import processes
                     processes.suspend(top["pid"])
@@ -239,22 +256,42 @@ class RealtimeProtection:
                     pass
             self.callback("ransomware", info)
 
-    @staticmethod
-    def _top_writer() -> dict | None:
-        best, best_w = None, 0
-        me = os.getpid()
-        for p in psutil.process_iter(["pid", "name", "exe"]):
-            try:
-                if p.info["pid"] == me:
-                    continue
-                io = p.io_counters()
-                if io.write_bytes > best_w and time.time() - p.create_time() < 3600:
-                    best_w = io.write_bytes
-                    best = {"pid": p.info["pid"], "name": p.info["name"], "exe": p.info["exe"] or "",
-                            "written": util.human_size(io.write_bytes)}
-            except (psutil.NoSuchProcess, psutil.AccessDenied, AttributeError, NotImplementedError):
+    def _culprit(self, enc_bytes: int) -> dict | None:
+        """Processo que mais escreveu DURANTE a janela do ataque (não o total acumulado desde que abriu).
+
+        Nunca aponta para suspensão: o próprio antivírus, quem o iniciou (terminal, sessão), processos
+        críticos ou programas íntegros do sistema/assinados — esses apenas aparecem no alerta."""
+        now_snap = _io_snapshot()
+        base = self._io_samples[0][1] if self._io_samples else {}
+        protected = _self_and_ancestors()
+        best, best_delta = None, 0
+        for pid, (ctime, wb, wc, name, exe) in now_snap.items():
+            if pid in protected:
                 continue
-        return best
+            old = base.get(pid)
+            if old and old[0] == ctime:
+                delta = max(wb - old[1], wc - old[2])
+            elif not base or ctime >= self._io_samples[0][0] - 1:
+                delta = max(wb, wc)  # processo nasceu durante o ataque
+            else:
+                continue
+            if delta > best_delta:
+                best_delta, best = delta, (pid, name, exe)
+        if best is None or best_delta < max(16 * 1024, enc_bytes // 4):
+            return None
+        pid, name, exe = best
+        can = True
+        from .system import processes
+        if processes.critical_reason(pid):
+            can = False
+        elif exe and not _is_interpreter(exe):
+            # programa íntegro do sistema / assinado: só alerta. Interpretadores (python, powershell, wscript...)
+            # são legítimos mas executam ransomware em script, então podem ser suspensos.
+            from .engine import trust
+            from .quarantine import protection_reason
+            ok, _desc = trust.check(exe)
+            can = not (ok or protection_reason(exe))
+        return {"pid": pid, "name": name, "exe": exe, "written": util.human_size(best_delta), "can_suspend": can}
 
     # ------------------------------------------------------------------ processos
     def _process_loop(self) -> None:
@@ -315,6 +352,8 @@ class RealtimeProtection:
             self._kill(pid, p, exe)
 
     def _kill(self, pid: int, p, what: str) -> bool:
+        if pid in _self_and_ancestors():
+            return False
         try:
             from .system import processes
             name = p.name()
@@ -375,6 +414,36 @@ class RealtimeProtection:
             if killed:
                 self.threats_blocked += 1
             self.callback("threat", res)
+
+
+def _io_snapshot() -> dict:
+    out = {}
+    for p in psutil.process_iter(["pid", "name", "exe", "create_time"]):
+        try:
+            io = p.io_counters()
+            wc = getattr(io, "write_chars", 0) or 0
+            out[p.info["pid"]] = (p.info["create_time"] or 0, io.write_bytes, wc, p.info["name"] or "",
+                                  p.info["exe"] or "")
+        except (psutil.Error, AttributeError, NotImplementedError, OSError):
+            continue
+    return out
+
+
+def _self_and_ancestors() -> set[int]:
+    pids = {os.getpid()}
+    try:
+        p = psutil.Process(os.getpid())
+        for a in p.parents():
+            pids.add(a.pid)
+        for c in p.children(recursive=True):  # processos de varredura do próprio antivírus
+            try:
+                if any("multiprocessing" in a for a in c.cmdline()):
+                    pids.add(c.pid)
+            except psutil.Error:
+                continue
+    except psutil.Error:
+        pass
+    return pids
 
 
 _INTERPRETERS = {"bash", "sh", "dash", "zsh", "ksh", "fish", "python", "python2", "python3", "perl", "ruby", "node",
