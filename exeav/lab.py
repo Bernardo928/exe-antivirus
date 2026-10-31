@@ -229,7 +229,20 @@ class AnalysisLab:
 
     def add_bytes(self, data: bytes, name: str, original_path: str = "", source: str = "manual") -> str:
         existing = self.find_by_hash(hashlib.sha256(data).hexdigest())
-        if existing:  # a mesma amostra já está na Sala de Análise: reaproveita
+        if existing:
+            # mesma amostra já está na Sala de Análise: reaproveita, mas passa a apontar para o local mais
+            # recente (assim "Isolar o original" age sobre o arquivo que existe agora)
+            if original_path:
+                meta = self.vault.meta(existing)
+                if meta.get("original_path") != original_path:
+                    meta.update(name=name, original_path=original_path)
+                    self.vault.update_meta(existing, meta)
+                    try:
+                        rep = self.report(existing)
+                        rep.update(name=name, original_path=original_path)
+                        self._save_report(existing, rep)
+                    except (OSError, ValueError):
+                        pass
             return existing
         rep = build_report(self.engine, data, name, original_path)
         meta = {"name": name, "original_path": original_path, "source": source,

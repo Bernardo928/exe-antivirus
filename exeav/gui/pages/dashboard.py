@@ -139,11 +139,10 @@ class DashboardPage(QWidget):
         self.s_lab.set(len(ctx.lab.items()))
         self.s_last.set(s.last_scan or "Nunca")
         self.s_sig.set(f"{len(ctx.engine.rules.rules)} + {ctx.sigdb.count:,}".replace(",", "."))
-        self.events.setUpdatesEnabled(False)
         self.events.clear_rows()
         colors = {"detecção": theme.DANGER, "quarentena": theme.WARNING, "bloqueio": theme.DANGER,
                   "ransomware": theme.DANGER, "scan": theme.ACCENT, "tempo real": theme.SUCCESS}
-        for ts, kind, msg, path in history.recent(40):
-            self.events.add_row([ts, kind, msg + (f" — {path}" if path else "")],
-                                colors={1: colors.get(kind, theme.MUTED)})
-        self.events.setUpdatesEnabled(True)
+        with self.events.bulk():
+            for ts, kind, msg, path in history.recent(40):
+                self.events.add_row([ts, kind, msg + (f" — {path}" if path else "")],
+                                    colors={1: colors.get(kind, theme.MUTED)})

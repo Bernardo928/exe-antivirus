@@ -57,11 +57,12 @@ class QuarantinePage(QWidget):
     def refresh(self):
         items = self.ctx.quarantine.items()
         self.table.clear_rows()
-        for it in items:
-            c = theme.VERDICT_COLORS.get(it.get("verdict"), theme.WARNING)
-            self.table.add_row([it.get("threat_name", ""), it.get("verdict", ""), it.get("score", 0),
-                                it.get("date", ""), util.human_size(it.get("size", 0)), it.get("original_path", "")],
-                               data=it["id"], colors={0: c, 1: c})
+        with self.table.bulk():
+            for it in items:
+                c = theme.VERDICT_COLORS.get(it.get("verdict"), theme.WARNING)
+                self.table.add_row([it.get("threat_name", ""), it.get("verdict", ""), it.get("score", 0),
+                                    it.get("date", ""), util.human_size(it.get("size", 0)),
+                                    it.get("original_path", "")], data=it["id"], colors={0: c, 1: c})
         self.count.setText(f"{len(items)} item(ns) isolado(s)")
         self.stack.setCurrentIndex(0 if items else 1)
         for b in (self.b_lab, self.b_restore, self.b_restore_to, self.b_delete, self.b_delete_all):

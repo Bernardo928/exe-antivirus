@@ -45,6 +45,7 @@ class Vault:
         self._lock_down(blob)
         meta = dict(meta, id=item_id)
         mpath.write_text(json.dumps(meta, ensure_ascii=False, indent=1), "utf-8")
+        self._changed()
         return item_id
 
     def store_file(self, path: str, meta: dict) -> str:
@@ -63,6 +64,7 @@ class Vault:
         self._lock_down(blob)
         meta = dict(meta, id=item_id)
         mpath.write_text(json.dumps(meta, ensure_ascii=False, indent=1), "utf-8")
+        self._changed()
         return item_id
 
     @staticmethod
@@ -102,6 +104,7 @@ class Vault:
     def update_meta(self, item_id: str, meta: dict) -> None:
         _, mpath = self._paths(item_id)
         mpath.write_text(json.dumps(meta, ensure_ascii=False, indent=1), "utf-8")
+        self._changed()
 
     def delete(self, item_id: str) -> None:
         for p in self._paths(item_id):
@@ -109,10 +112,23 @@ class Vault:
                 p.unlink()
             except FileNotFoundError:
                 pass
+        self._changed()
+
+    def _changed(self) -> None:
+        self._gen = getattr(self, "_gen", 0) + 1
 
     def items(self) -> list[dict]:
+        """Lista os itens (com cache: só relê os metadados quando a pasta muda)."""
+        try:
+            key = (os.stat(self.root).st_mtime_ns, getattr(self, "_gen", 0))
+        except OSError:
+            key = None
+        if key is not None and getattr(self, "_cache_key", None) == key:
+            return [dict(d) for d in self._cache]
         out = []
         for m in self.root.glob("*.json"):
+            if m.name.endswith(".report.json"):
+                continue
             try:
                 d = json.loads(m.read_text("utf-8"))
                 if (self.root / f"{d['id']}.bin").exists():
@@ -120,4 +136,5 @@ class Vault:
             except (OSError, ValueError, KeyError):
                 continue
         out.sort(key=lambda d: d.get("date", ""), reverse=True)
-        return out
+        self._cache_key, self._cache = key, out
+        return [dict(d) for d in out]

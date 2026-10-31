@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import os
+from contextlib import contextmanager
 import subprocess
 import sys
 import threading
@@ -354,9 +355,25 @@ class DataTable(QTableWidget):
         if stretch_col >= 0:
             hh.setSectionResizeMode(stretch_col, QHeaderView.Stretch)
 
-    def add_row(self, values: list, color: str | None = None, data=None, colors: dict | None = None) -> int:
+    @contextmanager
+    def bulk(self):
+        """Preenchimento em lote: sem reordenar nem redesenhar a cada linha."""
         sorting = self.isSortingEnabled()
         self.setSortingEnabled(False)
+        self.setUpdatesEnabled(False)
+        self._in_bulk = True
+        try:
+            yield self
+        finally:
+            self._in_bulk = False
+            self.setUpdatesEnabled(True)
+            self.setSortingEnabled(sorting)
+
+    def add_row(self, values: list, color: str | None = None, data=None, colors: dict | None = None) -> int:
+        bulk = getattr(self, "_in_bulk", False)
+        sorting = self.isSortingEnabled() if not bulk else False
+        if not bulk:
+            self.setSortingEnabled(False)
         r = self.rowCount()
         self.insertRow(r)
         for c, v in enumerate(values):
@@ -373,7 +390,8 @@ class DataTable(QTableWidget):
             if c == 0 and data is not None:
                 it.setData(Qt.UserRole, data)
             self.setItem(r, c, it)
-        self.setSortingEnabled(sorting)
+        if not bulk:
+            self.setSortingEnabled(sorting)
         return r
 
     def row_data(self, row: int):

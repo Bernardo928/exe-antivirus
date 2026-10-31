@@ -59,12 +59,11 @@ class HistoryPage(QWidget):
         return [r for r in rows if not q or q in " ".join(r).lower()]
 
     def refresh(self, *_):
-        self.table.setUpdatesEnabled(False)
         self.table.clear_rows()
         rows = self._rows()
-        for ts, kind, msg, path in rows[:1500]:
-            self.table.add_row([ts, kind, msg, path], colors={1: COLORS.get(kind, theme.MUTED)})
-        self.table.setUpdatesEnabled(True)
+        with self.table.bulk():
+            for ts, kind, msg, path in rows[:1500]:
+                self.table.add_row([ts, kind, msg, path], colors={1: COLORS.get(kind, theme.MUTED)})
 
     def export(self):
         dest, _ = QFileDialog.getSaveFileName(self, "Exportar histórico", "historico-exe-antivirus.csv")

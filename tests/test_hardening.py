@@ -210,3 +210,15 @@ def test_onion_inside_identifier_is_not_onion(engine):
     blob = b"\x7fELF\x02\x01\x01" + b"\x00" * 60 + b"decryption key\x00ciphertelnetlisten.onion\x00unexpected"
     r = engine.analyze(blob).result
     assert "ransom.note_binary" not in {i.id for i in r.indicators}
+
+
+def test_lab_duplicate_points_to_latest_location(engine, tmp_path):
+    from exeav.lab import AnalysisLab
+    lab = AnalysisLab(engine, tmp_path / "lab")
+    a, b = tmp_path / "a.exe", tmp_path / "outro_nome.exe"
+    a.write_bytes(samples.keylogger_pe())
+    b.write_bytes(samples.keylogger_pe())
+    i1 = lab.add_file(str(a))
+    i2 = lab.add_file(str(b))
+    assert i1 == i2 and len(lab.items()) == 1
+    assert lab.report(i1)["original_path"] == str(b) and lab.items()[0]["name"] == "outro_nome.exe"
