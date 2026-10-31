@@ -1,0 +1,148 @@
+@import "tailwindcss";
+@import "@fontsource-variable/fraunces/opsz.css";
+@import "@fontsource-variable/fraunces/opsz-italic.css";
+@import "@fontsource-variable/manrope/index.css";
+
+/*
+ * Paleta "brasa": carvão quente, creme de papel de embrulho, mostarda e
+ * vermelho de brasa. Sem gradientes roxos, sem neon.
+ */
+@theme {
+  --color-carvao: #15110e;
+  --color-carvao-2: #1d1814;
+  --color-carvao-3: #27201a;
+  --color-creme: #f3e9d8;
+  --color-creme-2: #d9ccb6;
+  --color-fumo: #a89a85;
+  --color-mostarda: #dba54a;
+  --color-mostarda-2: #e9bd6c;
+  --color-brasa: #a8371b;
+  --color-brasa-2: #c4492a;
+  --color-linha: rgb(243 233 216 / 0.14);
+  --color-aberto: #7fb069;
+
+  --font-display: "Fraunces Variable", "Iowan Old Style", Georgia, serif;
+  --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+
+  --radius-btn: 4px;
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 5.5rem;
+    -webkit-text-size-adjust: 100%;
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-carvao text-creme font-sans antialiased;
+    font-feature-settings: "ss01";
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: var(--color-mostarda);
+    color: var(--color-carvao);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-mostarda);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+@layer components {
+  .display {
+    font-family: var(--font-display);
+    font-optical-sizing: auto;
+    letter-spacing: -0.01em;
+  }
+  .eyebrow {
+    @apply text-[0.72rem] font-semibold uppercase tracking-[0.32em] text-mostarda;
+  }
+  .btn {
+    @apply inline-flex min-h-12 items-center justify-center gap-2.5 rounded-[var(--radius-btn)] px-6 text-[0.95rem] font-semibold transition-[background-color,color,border-color,transform] duration-200 ease-[var(--ease-out-soft)] select-none;
+  }
+  .btn:active {
+    transform: translateY(1px) scale(0.99);
+  }
+  .btn-primary {
+    @apply bg-mostarda text-carvao hover:bg-mostarda-2;
+  }
+  .btn-ghost {
+    @apply border border-creme/35 text-creme hover:border-creme hover:bg-creme/5;
+  }
+  .btn-dark {
+    @apply bg-carvao text-creme hover:bg-carvao-3;
+  }
+  .link-underline {
+    background-image: linear-gradient(currentColor, currentColor);
+    background-size: 0% 1px;
+    background-position: 0 100%;
+    background-repeat: no-repeat;
+    transition: background-size 0.3s var(--ease-out-soft);
+  }
+  .link-underline:hover,
+  .link-underline:focus-visible {
+    background-size: 100% 1px;
+  }
+
+  /* Marcas de grelha usadas nas composições sem foto. */
+  .grill {
+    background-color: var(--color-carvao-2);
+    background-image:
+      repeating-linear-gradient(
+        -38deg,
+        transparent 0 26px,
+        rgb(219 165 74 / 0.07) 26px 30px
+      ),
+      radial-gradient(120% 80% at 50% 110%, rgb(168 55 27 / 0.45), transparent 60%);
+  }
+
+  .arch {
+    border-radius: 999px 999px 6px 6px;
+  }
+
+  .grain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.08;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+}
+
+/* Revelação discreta ao rolar. Só esconde o que está fora da tela no carregamento. */
+.reveal-pending {
+  opacity: 0;
+  transform: translateY(18px);
+}
+.reveal-done {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.8s var(--ease-out-soft),
+    transform 0.8s var(--ease-out-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+  .reveal-pending {
+    opacity: 1;
+    transform: none;
+  }
+}
