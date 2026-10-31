@@ -181,3 +181,17 @@ def test_harden_keeps_semantics():
     for pat, txt in ((r"vssadmin\s+delete\s+shadows", b"vssadmin   delete shadows"),
                      (r"(?:\[char\]\s*\(?\s*\d+\s*\)?\s*[+,]\s*){3,}", b"[char]73 + [char] 69+[char](88) ,")):
         assert re.search(harden(pat).encode(), txt, re.I)
+
+
+def test_ransomware_culprit_never_self_or_ancestors(engine, tmp_path):
+    """O escudo anti-ransomware nunca pode apontar (e suspender) o próprio antivírus ou quem o iniciou."""
+    import time as _t
+    from exeav.quarantine import Quarantine
+    from exeav.realtime import RealtimeProtection, _self_and_ancestors
+    rt = RealtimeProtection(engine, Quarantine(tmp_path / "q"))
+    rt._io_samples.append((_t.time() - 5, {}))
+    with open(tmp_path / "grande.bin", "wb") as f:  # este processo escreve bastante
+        f.write(os.urandom(4 * 1024 * 1024))
+    c = rt._culprit(0)
+    assert c is None or c["pid"] not in _self_and_ancestors()
+    assert os.getpid() in _self_and_ancestors() and os.getppid() in _self_and_ancestors()
