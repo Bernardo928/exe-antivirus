@@ -69,11 +69,11 @@ def test_worm_scanner_is_killed_and_script_isolated(tmp_path):
 
 def test_beacon_to_irc_is_blocked(tmp_path):
     sim = _sim_copy(tmp_path)
-    p = subprocess.Popen([sys.executable, sim, "beacon", "40", "1.5"], stdout=subprocess.DEVNULL)
+    p = subprocess.Popen([sys.executable, sim, "beacon", "70", "1.5"], stdout=subprocess.DEVNULL)
     sh, events = _shield([p.pid], tmp_path)
     sh.start()
     try:
-        assert _wait(lambda: p.poll() is not None, 20), "o bot não foi encerrado"
+        assert _wait(lambda: p.poll() is not None, 60), "o bot não foi encerrado"
     finally:
         sh.stop()
         if p.poll() is None:

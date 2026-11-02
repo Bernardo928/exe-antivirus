@@ -184,6 +184,9 @@ class RealtimeProtection:
 
     def _handle_threat(self, res: ScanResult, pids: list[int] | None = None) -> None:
         history.log("detecção", f"[Tempo real] {res.threat_name} ({res.verdict}, {res.score} pts)", res.path)
+        from . import incidents
+        pre = incidents.collect(res.path)
+        qid = ""
         action = "notificado"
         if res.verdict == MALICIOUS:
             if self.settings.realtime_kill_malicious_process:
@@ -200,12 +203,13 @@ class RealtimeProtection:
                         pass
             if self.settings.auto_action == "quarantine":
                 try:
-                    self.quarantine.isolate(res)
+                    qid = self.quarantine.isolate(res)
                     action = "colocado em quarentena" + (" e processo encerrado" if action == "processo encerrado" else "")
                     self.threats_blocked += 1
                 except Exception as e:
                     action = f"falha ao isolar: {e}"
         res.action = action
+        incidents.report(res, "tempo real", pid=(pids or [None])[0], action=action, quarantine_id=qid, pre=pre)
         self.callback("threat", res)
 
     def _ransomware_check(self) -> None:
@@ -254,6 +258,17 @@ class RealtimeProtection:
                     history.log("bloqueio", f"Processo {top['name']} (PID {top['pid']}) SUSPENSO pelo escudo anti-ransomware")
                 except Exception:
                     pass
+            from . import incidents
+            incidents.report(None, "anti-ransomware", pid=(top or {}).get("pid"),
+                             action="processo suspenso" if info.get("suspended") else "alerta",
+                             behavior={"title": "Atividade de ransomware", "verdict": "malicioso", "score": 100,
+                                       "critical": True, "key": f"ransom-{(top or {}).get('pid')}",
+                                       "path": (top or {}).get("exe", ""),
+                                       "indicators": [{"id": "ransom.mass_encrypt", "name": "Arquivos cifrados em massa",
+                                                       "category": "Ransomware", "weight": 100,
+                                                       "description": f"{len(encrypted)} arquivos viraram dados "
+                                                                      "aleatórios (cifrados) em 15 segundos.",
+                                                       "evidence": encrypted[:20]}]})
             self.callback("ransomware", info)
 
     def _culprit(self, enc_bytes: int) -> dict | None:
@@ -324,7 +339,7 @@ class RealtimeProtection:
             return
         if os.path.isfile(exe):
             self._check_exe(p, pid, exe)
-        if _is_interpreter(exe) and len(cmdline) > 1:
+        if (_is_interpreter(exe) or _is_lolbin(exe)) and len(cmdline) > 1:
             self._check_cmdline(p, pid, exe, cmdline)
 
     def _check_exe(self, p, pid: int, exe: str) -> None:
@@ -405,15 +420,64 @@ class RealtimeProtection:
             res = self.engine.analyze(text.encode("utf-8", "replace"), ftype="script").result
         except Exception:
             return
+        parent = self._untrusted_parent(p) if res.is_threat else None
+        if parent:
+            # segundo sinal independente: o comando perigoso foi disparado por um programa sem origem verificável
+            from .engine.models import Indicator
+            res.indicators.append(Indicator(
+                id="chain.untrusted_parent", name="Disparado por programa desconhecido", category="Cadeia de execução",
+                description="Quem executou este comando foi um programa sem assinatura digital/pacote verificado — "
+                            "cadeia típica de malware usando ferramentas do sistema.",
+                weight=25, severity="alta", evidence=[f"{parent['name']} (PID {parent['pid']}) {parent['exe']}"]))
+            res.score += 25
+            lo, hi = self.settings.thresholds()
+            res.verdict = MALICIOUS if res.score >= hi else res.verdict
+            res.threat_name = self.engine._threat_name(res)
         self._scanned_exes[key] = res.verdict
-        if res.verdict == MALICIOUS:
+        if res.is_threat:
             res.path = f"[linha de comando do PID {pid}] {text[:300]}"
-            history.log("detecção", f"[Tempo real] {res.threat_name} na linha de comando ({res.score} pts)", res.path)
-            killed = self.settings.realtime_kill_malicious_process and self._kill(pid, p, exe)
-            res.action = "processo encerrado" if killed else "notificado"
-            if killed:
-                self.threats_blocked += 1
+            history.log("detecção", f"[Tempo real] {res.threat_name} na linha de comando ({res.verdict}, "
+                                    f"{res.score} pts)", res.path)
+            action = "notificado"
+            if res.verdict == MALICIOUS and self.settings.realtime_kill_malicious_process:
+                if self._kill(pid, p, exe):
+                    action = "processo encerrado"
+                    self.threats_blocked += 1
+                if parent and parent.get("can_suspend"):
+                    try:
+                        from .system import processes
+                        processes.suspend(parent["pid"])
+                        action += f" • programa que disparou ({parent['name']}) suspenso"
+                        history.log("bloqueio", f"{parent['name']} (PID {parent['pid']}) suspenso: disparou "
+                                                f"{res.threat_name}", parent["exe"])
+                    except Exception:
+                        pass
+            res.action = action
+            from . import incidents
+            incidents.report(res, "tempo real: linha de comando", pid=pid, action=res.action,
+                             data=text.encode("utf-8", "replace"),
+                             events=[{"processo_pai": parent}] if parent else None)
             self.callback("threat", res)
+
+    def _untrusted_parent(self, p) -> dict | None:
+        """Processo-pai sem origem verificável (nem o antivírus, nem do sistema, nem assinado)."""
+        try:
+            par = p.parent()
+            if par is None:
+                return None
+            exe = par.exe()
+            name = par.name()
+        except (psutil.Error, OSError):
+            return None
+        if not exe or not os.path.isfile(exe) or self.engine.exclusions.is_excluded(exe) or _is_interpreter(exe):
+            return None
+        from .engine import trust
+        from .quarantine import protection_reason
+        from .system import processes
+        if trust.check(exe)[0] or protection_reason(exe):
+            return None
+        return {"pid": par.pid, "name": name, "exe": exe,
+                "can_suspend": par.pid not in _self_and_ancestors() and not processes.critical_reason(par.pid)}
 
 
 def _io_snapshot() -> dict:
@@ -449,6 +513,21 @@ def _self_and_ancestors() -> set[int]:
 _INTERPRETERS = {"bash", "sh", "dash", "zsh", "ksh", "fish", "python", "python2", "python3", "perl", "ruby", "node",
                  "nodejs", "php", "lua", "pwsh", "powershell", "powershell_ise", "wscript", "cscript", "mshta",
                  "cmd", "java", "javaw", "osascript", "rundll32", "regsvr32", "msiexec"}
+
+
+# Ferramentas legítimas do sistema que o ransomware/malware usa direto (sem interpretador) para apagar backups,
+# desligar a recuperação, derrubar o firewall ou baixar arquivos. A linha de comando delas é analisada pelas
+# mesmas regras dos scripts (só alarma se o comando for de fato destrutivo).
+_LOLBINS = {"vssadmin", "wmic", "wbadmin", "bcdedit", "netsh", "reg", "schtasks", "certutil", "bitsadmin",
+            "wevtutil", "fsutil", "cipher", "sc", "icacls", "takeown", "attrib",
+            "crontab", "chattr", "iptables", "nft", "ufw", "systemctl", "setenforce", "shred", "curl", "wget"}
+
+
+def _is_lolbin(exe: str) -> bool:
+    name = os.path.basename(exe).lower()
+    if name.endswith(".exe"):
+        name = name[:-4]
+    return name in _LOLBINS
 
 
 def _is_interpreter(exe: str) -> bool:

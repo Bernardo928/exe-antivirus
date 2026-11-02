@@ -370,6 +370,8 @@ class ScriptGuard:
             self._seen.clear()
         if not res.is_threat:
             return res
+        from . import incidents
+        proc_info = incidents.process_info(pid) if pid else {}      # antes de encerrar o processo
         first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")[:160]
         res.path = f"[{source} PID {pid}] {where or first}"
         saved = self._save_capture(data, source, h)
@@ -385,12 +387,18 @@ class ScriptGuard:
                 except Exception:
                     pass
             history.log("detecção", f"[Scripts] {res.threat_name} ({res.score} pts) — {res.action}", res.path)
+            self._incident(res, pid, data, proc_info)
             self.callback("threat", res)
         else:
             res.action = "notificado"
             history.log("detecção", f"[Scripts] suspeito: {res.threat_name} ({res.score} pts)", res.path)
+            self._incident(res, pid, data, proc_info)
             self.callback("suspeito", res)
         return res
+
+    def _incident(self, res, pid, data, proc_info) -> None:
+        from . import incidents
+        incidents.report(res, "análise de scripts", pid=pid, action=res.action, data=data, process=proc_info)
 
     def _save_capture(self, data: bytes, source: str, h: str) -> str:
         try:

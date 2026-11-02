@@ -135,6 +135,10 @@ class Engine:
         sha1 = hashlib.sha1(data).hexdigest() if (self.sigdb.has_sha1 or deep) else ""
         an.hashes = {"md5": md5, "sha1": sha1, "sha256": sha256}
         hit = self.sigdb.lookup(sha256, md5, sha1)
+        if not hit and depth == 0:
+            from .. import intel
+            if intel.hash_known(sha256):
+                hit = ("ThreatFox.KnownMalware", "ThreatFox (abuse.ch)")
         if hit:
             inds.append(Indicator(id="sig.hash", name=f"Malware conhecido: {hit[0]}", category="Assinatura",
                                   description="O hash do arquivo corresponde exatamente a uma amostra de malware "
@@ -154,7 +158,24 @@ class Engine:
             an.info.setdefault("erro de análise", f"{type(e).__name__}: {str(e)[:200]}")
             target = "pe" if ftype.startswith("pe") else "elf" if ftype.startswith("elf") else "any"
             inds += self.rules.run(self._strings_blob(data), target)
+        if depth == 0 and (ftype in ("script", "html", "ole", "ooxml", "pdf", "rtf", "lnk", "text")
+                           or filetype.is_executable_type(ftype)):
+            from .. import intel
+            hosts = intel.content_hits(data)
+            if hosts:
+                inds.append(Indicator(
+                    id="intel.malicious_host", name="Cita endereço de infraestrutura maliciosa conhecida",
+                    category="Inteligência de ameaças", weight=45, severity="alta", evidence=hosts,
+                    family="Intel.MaliciousHost",
+                    description="O conteúdo aponta para domínio(s) listado(s) em feeds de inteligência de ameaças "
+                                "(URLhaus/ThreatFox) como distribuidores de malware ou servidores de comando."))
         res.indicators = self._merge(inds)
+        if depth == 0:
+            # exclusões específicas por conteúdo (SHA-256) marcadas pelo usuário como falso positivo
+            from .. import fpengine
+            kept, note = fpengine.apply(res.indicators, sha256)
+            if note is not None:
+                res.indicators = kept + [note]
         self._finalize(res, path if depth == 0 else "")
         return an
 

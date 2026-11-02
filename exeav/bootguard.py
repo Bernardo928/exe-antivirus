@@ -168,6 +168,8 @@ class BootGuard:
         it = d["item"]
         target = it.get("target") or ""
         acts = []
+        from . import incidents
+        pre = incidents.collect(target) if target else {}
         killed = self._kill_running(target)
         if killed:
             acts.append(f"{killed} processo(s) encerrado(s)")
@@ -198,6 +200,10 @@ class BootGuard:
         history.log("inicialização", f"Bloqueado ao ligar: {it.get('name')} — {d.get('reason', '')} ({summary})",
                     target or it.get("location", ""))
         self.blocked_this_boot += 1
+        if res is not None and res.is_threat:
+            incidents.report(res, "proteção ao ligar", action=summary, pre=pre,
+                             events=[{"inicializacao": it.get("source"), "item": it.get("name"),
+                                      "comando": it.get("command", "")[:300]}])
         self.callback("blocked", d)
         return summary
 

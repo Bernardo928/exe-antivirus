@@ -56,6 +56,11 @@ _LINUX_TEMP = ("/tmp/", "/var/tmp/", "/dev/shm/", "/run/user/")
 _LINUX_SYSTEM = ("/usr/", "/bin/", "/sbin/", "/lib/", "/lib64/", "/opt/", "/snap/")
 
 
+_FINDING_GROUP = {"botnet.c2_known": "Inteligência de ameaças", "botnet.deleted_exe": "Processo",
+                  "botnet.temp_exe": "Processo", "botnet.masquerade": "Processo", "botnet.exe_malicious": "Arquivo",
+                  "botnet.exe_suspicious": "Arquivo", "botnet.trusted": "Confiança"}
+
+
 @dataclass
 class Finding:
     id: str
@@ -343,7 +348,7 @@ class BotnetShield:
         families = []
 
         # 1. servidor de comando conhecido
-        c2_hits = sorted(ips & self.c2.ips)
+        c2_hits = sorted(ips & self._c2_ips())
         if c2_hits:
             F.append(Finding("botnet.c2_known", "Conexão com servidor de comando (C2) conhecido",
                              "O processo se comunica com um endereço catalogado como servidor de controle de "
@@ -483,10 +488,14 @@ class BotnetShield:
         if self._handled.get(rep.pid) == rep.verdict or (self._handled.get(rep.pid) == MALICIOUS):
             return
         self._handled[rep.pid] = rep.verdict
+        from . import incidents
+        proc_info = incidents.process_info(rep.pid) if not self.dry_run else {}
         if rep.verdict == SUSPICIOUS or self.dry_run:
             rep.action = "alerta" if not self.dry_run else "apenas observado"
             history.log("anti-botnet", f"Comportamento suspeito de bot: {rep.name} (PID {rep.pid}, {rep.score} pts)",
                         rep.exe)
+            if not self.dry_run:
+                self._report(rep, proc_info)
             self.callback("suspeito", rep)
             return
         actions = []
@@ -501,6 +510,7 @@ class BotnetShield:
             except Exception as e:
                 actions.append(f"falha ao encerrar ({e})")
         target = self._file_to_isolate(rep)
+        pre = incidents.collect(target) if target else {}
         if can_act and target and self.settings.auto_action == "quarantine":
             try:
                 self.quarantine.isolate(ScanResult(path=target, verdict=MALICIOUS, score=rep.score,
@@ -509,7 +519,8 @@ class BotnetShield:
             except Exception as e:
                 actions.append(f"quarentena falhou ({str(e)[:60]})")
         if self.settings.botnet_firewall_block and (can_act or any(f.id == "botnet.c2_known" for f in rep.findings)):
-            c2_ips = [ip for ip in rep.remote_ips if ip in self.c2.ips]
+            known = self._c2_ips()
+            c2_ips = [ip for ip in rep.remote_ips if ip in known]
             targets = c2_ips or [ip for ip in rep.remote_ips if self._is_c2_candidate(rep, ip)]
             n = 0
             for ip in targets[:20]:
@@ -526,7 +537,28 @@ class BotnetShield:
         rep.action = "; ".join(actions) or "alerta"
         history.log("bloqueio" if can_act else "anti-botnet",
                     f"BOTNET: {rep.family} — {rep.name} (PID {rep.pid}, {rep.score} pts): {rep.action}", rep.exe)
+        self._report(rep, proc_info, pre, target or "")
         self.callback("botnet", rep)
+
+    def _c2_ips(self) -> set[str]:
+        """Lista própria de C2 + IPs de servidores de comando dos feeds de inteligência (Feodo/ThreatFox)."""
+        from . import intel
+        try:
+            extra = intel.ips()
+        except Exception:
+            extra = set()
+        return self.c2.ips | extra if extra else self.c2.ips
+
+    def _report(self, rep: ProcessReport, proc_info: dict, pre: dict | None = None, target: str = "") -> None:
+        from . import incidents
+        incidents.report(None, "anti-botnet", pid=rep.pid, action=rep.action, pre=pre, process=proc_info, behavior={
+            "title": f"Botnet: {rep.family}" if rep.verdict == MALICIOUS else "Comportamento de bot",
+            "verdict": rep.verdict, "score": rep.score, "critical": rep.verdict == MALICIOUS and rep.score >= 100,
+            "known": any(f.id == "botnet.c2_known" for f in rep.findings), "path": target or rep.exe,
+            "key": f"{rep.exe}|{rep.family}",
+            "indicators": [{"id": f.id, "name": f.name, "category": _FINDING_GROUP.get(f.id, "Rede"),
+                            "weight": f.weight, "description": f.description, "evidence": f.evidence}
+                           for f in rep.findings]})
 
     def _file_to_isolate(self, rep: ProcessReport) -> str | None:
         """Arquivo a isolar: o executável do bot ou, se for um interpretador, o script que ele executa."""

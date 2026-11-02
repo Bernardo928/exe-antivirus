@@ -31,6 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="com --install-system (Linux, como root): serviço que reaplica o firewall a cada boot")
     p.add_argument("--uninstall-system", action="store_true", help="desfaz tudo o que o antivírus mudou no sistema")
     p.add_argument("--boot-tasks", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--update-intel", action="store_true",
+                   help="atualiza os feeds de inteligência de ameaças (Feodo, URLhaus, ThreatFox, CISA KEV)")
     p.add_argument("--smoke-test", metavar="PNG", help=argparse.SUPPRESS)
     p.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
     return p
@@ -53,12 +55,16 @@ def run_scan(targets: list[str], quarantine: bool, as_json: bool, kind: str = "c
     q = Quarantine() if quarantine else None
 
     def on_threat(r):
+        from . import incidents
+        pre = incidents.collect(r.path)
+        qid = ""
         if q:
             try:
-                q.isolate(r)
+                qid = q.isolate(r)
                 r.action = "quarentena"
             except Exception as e:
                 r.action = f"falha: {e}"
+        incidents.report(r, f"linha de comando ({kind})", action=r.action, pre=pre, quarantine_id=qid)
         _print_result(r, as_json)
     sc = Scanner(eng, kind, targets, on_threat=on_threat, cache=ScanCache())
     st = sc.run()
@@ -163,6 +169,13 @@ def main(argv: list[str] | None = None) -> int:
         for line in install.uninstall():
             print("-", line)
         return 0
+    if args.update_intel:
+        from . import intel
+        results = intel.update_all()
+        for r in results:
+            print(f"{r.get('feed'):10} {r.get('resultado')}  total={r.get('total', '-')} novos={r.get('novos', '-')} "
+                  f"inválidas={r.get('invalidas', '-')} sha256={r.get('sha256', '-')}")
+        return 0 if any(r.get("resultado") == "ok" for r in results) else 1
     if args.boot_tasks:
         from .system import install
         return install.boot_tasks()

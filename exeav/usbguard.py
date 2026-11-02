@@ -323,24 +323,28 @@ class UsbGuard:
             return t
         return self._scan(drive)
 
-    def _isolate(self, res: ScanResult) -> None:
+    def _isolate(self, res: ScanResult) -> str:
         if res.verdict != MALICIOUS or self.settings.auto_action != "quarantine":
             res.action = "notificado"
-            return
+            return ""
         try:
-            self.quarantine.isolate(res)
+            qid = self.quarantine.isolate(res)
             res.action = "quarentena"
+            return qid
         except Exception as e:
             res.action = f"falha ao isolar: {e}"
+            return ""
 
     def _scan(self, drive: Drive):
         from .scanner import USB, Scanner
         root = drive.mountpoint
         summary = {"drive": drive.title(), "files": 0, "threats": 0, "fixed": 0, "date": time.strftime("%H:%M:%S")}
         # 1) truques na raiz
+        from . import incidents
         for f in inspect_root(root):
             res = finding_result(f)
-            self._isolate(res)
+            pre = incidents.collect(f.path)
+            qid = self._isolate(res)
             if (f.hidden_target and os.path.exists(f.hidden_target) and _is_hidden(f.hidden_target)
                     and self.settings.usb_fix_shortcut_virus and res.verdict == MALICIOUS):
                 try:
@@ -352,14 +356,19 @@ class UsbGuard:
             summary["threats"] += 1
             self.threats_found += 1
             history.log("detecção", f"[Pen drive] {res.threat_name}: {f.description}", f.path)
+            incidents.report(res, f"pen drive: {drive.title()}", action=res.action, pre=pre, quarantine_id=qid,
+                             events=[{"dispositivo": drive.title(), "device": drive.device, "fs": drive.fstype}])
             self.callback("finding", (drive, f, res))
 
         # 2) todos os arquivos
         def on_threat(r):
-            self._isolate(r)
+            pre = incidents.collect(r.path)
+            qid = self._isolate(r)
             summary["threats"] += 1
             self.threats_found += 1
             history.log("detecção", f"[Pen drive] {r.threat_name} ({r.score} pts) — {r.action}", r.path)
+            incidents.report(r, f"pen drive: {drive.title()}", action=r.action, pre=pre, quarantine_id=qid,
+                             events=[{"dispositivo": drive.title(), "device": drive.device, "fs": drive.fstype}])
             self.callback("threat", r)
         sc = Scanner(self.engine, USB, [root], on_threat=on_threat, cache=self.cache, low_priority=True,
                      on_progress=lambda st: self.callback("progress", (drive, st)))

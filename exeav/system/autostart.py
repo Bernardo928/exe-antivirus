@@ -68,14 +68,15 @@ def delete_task() -> None:
 
 def _run_key(enabled: bool) -> None:
     import winreg
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _WIN_KEY, 0, winreg.KEY_SET_VALUE) as k:
-        if enabled:
-            winreg.SetValueEx(k, _WIN_NAME, 0, winreg.REG_SZ, _command())
-        else:
-            try:
+    if not enabled:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _WIN_KEY, 0, winreg.KEY_SET_VALUE) as k:
                 winreg.DeleteValue(k, _WIN_NAME)
-            except OSError:
-                pass
+        except OSError:      # a chave Run (ou o valor) pode nem existir: nada a remover
+            pass
+        return
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, _WIN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+        winreg.SetValueEx(k, _WIN_NAME, 0, winreg.REG_SZ, _command())
 
 
 def _run_key_exists() -> bool:

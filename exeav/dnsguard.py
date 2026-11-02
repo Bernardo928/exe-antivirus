@@ -325,6 +325,14 @@ def _qname(packet: bytes) -> str:
     return ".".join(labels)
 
 
+def _intel_blocked(name: str) -> bool:
+    try:
+        from . import intel
+        return intel.is_malicious_domain(name)
+    except Exception:
+        return False
+
+
 def blocked_answer(query: bytes) -> bytes:
     """Resposta NXDOMAIN para um site bloqueado."""
     if len(query) < 12:
@@ -354,6 +362,7 @@ class DohProxy:
         # (endereço para conectar, nome do servidor para o certificado, porta, usar TLS)
         self.upstream = upstream or (p["ip4"], p["host"], 443, True)
         self.blocked = set(blocked or ())
+        self.use_intel = True       # também bloqueia domínios maliciosos dos feeds de inteligência
         self.listen, self.port = listen, port
         self.queries = 0
         self.blocked_count = 0
@@ -381,7 +390,8 @@ class DohProxy:
 
     def resolve(self, query: bytes) -> bytes:
         self.queries += 1
-        if is_blocked_name(_qname(query), self.blocked):
+        name = _qname(query)
+        if is_blocked_name(name, self.blocked) or (self.use_intel and _intel_blocked(name)):
             self.blocked_count += 1
             return blocked_answer(query)
         addr, host, port, _tls = self.upstream

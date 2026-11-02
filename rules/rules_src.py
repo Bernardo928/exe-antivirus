@@ -400,6 +400,8 @@ RULES = [
               r"mkfifo\s+/tmp/\w+[^\n]{0,80}\|\s*n(?:c|cat)\b",
               r"socat\s+[^\n]{0,60}exec:[\"']?(?:/bin/)?(?:ba)?sh",
               r"socket\.socket\([^\n]{0,400}\.connect\(\([^\n]{0,400}(?:os\.dup2|pty\.spawn|subprocess\.call\(\[[\"']/bin/(?:ba)?sh)",
+              # mesma técnica escrita em várias linhas: conecta, liga entrada/saída ao socket e abre um shell
+              r"\.connect\(\(\s*[\"'][^\"'\n]{1,64}[\"']\s*,\s*\d{1,5}\s*\)\)[\s\S]{0,300}?os\.dup2\([^\n]{0,60}fileno\(\)\s*,\s*[012]\s*\)[\s\S]{0,300}?(?:pty\.spawn|subprocess\.(?:call|popen|run)\(\s*\[?\s*[\"'](?:/bin/)?(?:ba|z)?sh)",
               r"use\s+socket;[^\n]{0,300}exec\s*\(\s*[\"']/bin/(?:ba)?sh",
               r"fsockopen\s*\([^\n]{0,200}(?:exec|shell_exec|system|proc_open)\s*\([\"']/bin/(?:ba)?sh"]),
 

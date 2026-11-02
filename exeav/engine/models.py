@@ -55,6 +55,31 @@ class ScanResult:
     def is_threat(self) -> bool:
         return self.verdict in (SUSPICIOUS, MALICIOUS)
 
+    @property
+    def evidence_groups(self) -> list[str]:
+        """Categorias INDEPENDENTES de evidência positiva (ex.: Rede, Persistência, Ofuscação)."""
+        return sorted({i.category for i in self.indicators if i.weight > 0 and i.category not in ("Confiança",)})
+
+    @property
+    def confidence(self) -> str:
+        """Nível de confiança da detecção. Uma única evidência fraca nunca vira 'alta'.
+        confirmada: idêntico a malware catalogado (hash) ou EICAR
+        alta: veredito malicioso com 3+ tipos independentes de evidência
+        média: 2 tipos independentes, ou 1 evidência crítica bem específica
+        baixa: o resto (só um tipo de evidência)"""
+        if self.verdict == CLEAN:
+            return ""
+        ids = {i.id for i in self.indicators}
+        if ids & {"sig.hash", "test.eicar"}:
+            return "confirmada"
+        groups = self.evidence_groups
+        crit = any(i.weight >= 70 and i.severity == "critica" for i in self.indicators)
+        if self.verdict == MALICIOUS and len(groups) >= 3:
+            return "alta"
+        if len(groups) >= 2 or crit:
+            return "média"
+        return "baixa"
+
     def reasons(self) -> list[str]:
         return [f"{i.name} (+{i.weight})" if i.weight >= 0 else f"{i.name} ({i.weight})"
                 for i in sorted(self.indicators, key=lambda x: -x.weight)]
@@ -65,6 +90,7 @@ class ScanResult:
             "threat_name": self.threat_name, "file_type": self.file_type, "size": self.size,
             "sha256": self.sha256, "indicators": [i.to_dict() for i in self.indicators],
             "error": self.error, "action": self.action, "container": self.container,
+            "confidence": self.confidence,
         }
 
     @classmethod

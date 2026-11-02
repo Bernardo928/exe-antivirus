@@ -5,7 +5,7 @@ import threading
 
 from PySide6.QtCore import QObject, Signal
 
-from .. import config, history
+from .. import config, history, incidents
 from ..botnet import BotnetShield
 from ..bootguard import BootGuard
 from ..engine.engine import Engine
@@ -83,7 +83,8 @@ class AppContext:
         if self.scanning:
             return False
         sc = Scanner(self.engine, kind, targets,
-                     on_threat=lambda r: self.bridge.scan_threat.emit(r),
+                     on_threat=lambda r: (incidents.report(r, f"verificação ({kind})"),
+                                          self.bridge.scan_threat.emit(r)),
                      on_progress=lambda s: self.bridge.scan_progress.emit(s),
                      cache=self.cache)
         self.scanner = sc
