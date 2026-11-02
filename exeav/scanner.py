@@ -288,22 +288,47 @@ class Scanner:
         que é o da interface."""
         from concurrent.futures import TimeoutError as FutureTimeout
         from concurrent.futures.process import BrokenProcessPool
-        for _attempt in range(3):
-            pool = self._pool
-            if pool is None:
-                break
+        pool = self._pool
+        if pool is not None:
             try:
                 return pool.submit(_child_scan, path).result(timeout=300)
             except BrokenProcessPool:
+                # o grupo caiu por causa de ALGUM arquivo em análise — não necessariamente este.
+                # Reanalisa este sozinho num processo próprio: só o culpado de verdade é ignorado.
                 self._replace_pool(pool)
             except FutureTimeout:
                 self._replace_pool(pool)
                 return ScanResult(path=path, skipped=True,
                                   error="Tempo de análise esgotado (arquivo gigantesco ou malformado)")
             except RuntimeError:  # grupo encerrado no meio (parada da varredura)
-                break
-        history.log("análise", "Arquivo derrubou o processo de análise e foi ignorado (estrutura malformada)", path)
-        return ScanResult(path=path, skipped=True, error="O arquivo derrubou o processo de análise (estrutura malformada)")
+                pass
+        if self._stop.is_set():
+            return ScanResult(path=path, skipped=True, error="Varredura interrompida")
+        return self._scan_isolated(path)
+
+    def _scan_isolated(self, path: str) -> ScanResult:
+        from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures import TimeoutError as FutureTimeout
+        from concurrent.futures.process import BrokenProcessPool
+        from dataclasses import asdict
+        ex = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"),
+                                 initializer=_child_init, initargs=(asdict(self.settings), self.low_priority))
+        try:
+            return ex.submit(_child_scan, path).result(timeout=300)
+        except BrokenProcessPool:
+            history.log("análise", "Arquivo derrubou o processo de análise e foi ignorado (estrutura malformada)", path)
+            return ScanResult(path=path, skipped=True,
+                              error="O arquivo derrubou o processo de análise (estrutura malformada)")
+        except FutureTimeout:
+            return ScanResult(path=path, skipped=True, error="Tempo de análise esgotado (arquivo gigantesco ou malformado)")
+        finally:
+            procs = list(getattr(ex, "_processes", {}).values() or [])
+            ex.shutdown(wait=False, cancel_futures=True)
+            for p in procs:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
 
     def _replace_pool(self, broken) -> None:
         with self._lock:

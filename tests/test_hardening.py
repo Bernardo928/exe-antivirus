@@ -269,3 +269,26 @@ def test_scanner_survives_worker_crash(tmp_path, monkeypatch):
     assert st.files == 8
     assert [os.path.basename(r.path) for r in st.threats] == ["ameaca.com"]
     assert st.skipped >= 1
+
+
+def test_scanner_never_loses_threats_when_other_files_crash(tmp_path, monkeypatch):
+    """Vários arquivos que derrubam o analisador misturados com várias ameaças: nenhuma ameaça pode se perder
+    (antes, a ameaça em análise no mesmo grupo de processos podia ser descartada junto com o culpado)."""
+    from exeav import config
+    from exeav import scanner as sc
+    from exeav.engine.engine import Engine
+    monkeypatch.setattr(sc, "_child_scan", samples.crashing_child_scan)
+    d = tmp_path / "pasta"
+    d.mkdir()
+    for i in range(12):
+        (d / f"ok{i}.txt").write_text("texto comum")
+    for i in range(3):
+        (d / f"sub{i}").mkdir()
+        (d / f"sub{i}" / "derruba.bin").write_bytes(b"x" * 100)
+        (d / f"ameaca{i}.com").write_bytes(samples.eicar())
+    s = config.Settings()
+    s.scan_processes = True
+    s.use_cache = False
+    st = sc.Scanner(Engine(s), "custom", [str(d)]).run()
+    assert sorted(os.path.basename(r.path) for r in st.threats) == ["ameaca0.com", "ameaca1.com", "ameaca2.com"]
+    assert st.skipped == 3
