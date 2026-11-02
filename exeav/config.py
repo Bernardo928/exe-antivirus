@@ -1,6 +1,7 @@
 """Configurações persistentes (JSON na pasta de dados)."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -47,6 +48,7 @@ class Settings:
     realtime_process_monitor: bool = True
     realtime_kill_malicious_process: bool = True
     ransomware_shield: bool = True
+    ransomware_canaries: bool = True
     botnet_shield: bool = True
     botnet_auto_kill: bool = True
     botnet_firewall_block: bool = True
@@ -142,9 +144,17 @@ class SettingsStore:
 
     def save(self) -> None:
         with self._lock:
+            text = json.dumps(asdict(self.settings), indent=2, ensure_ascii=False)
             tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(asdict(self.settings), indent=2, ensure_ascii=False), "utf-8")
+            tmp.write_text(text, "utf-8")
             os.replace(tmp, self.path)
+            # cópia e hash do que o PRÓPRIO antivírus gravou: permite detectar alteração feita por fora
+            # (ex.: malware desligando a proteção editando o arquivo) e restaurar
+            try:
+                self.path.with_suffix(".lastgood.json").write_text(text, "utf-8")
+                self.path.with_suffix(".sha256").write_text(hashlib.sha256(text.encode("utf-8")).hexdigest(), "utf-8")
+            except OSError:
+                pass
 
 
 _store: SettingsStore | None = None

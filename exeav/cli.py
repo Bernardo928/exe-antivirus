@@ -31,6 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="com --install-system (Linux, como root): serviço que reaplica o firewall a cada boot")
     p.add_argument("--uninstall-system", action="store_true", help="desfaz tudo o que o antivírus mudou no sistema")
     p.add_argument("--boot-tasks", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--selfcheck", action="store_true",
+                   help="confere a integridade do próprio antivírus (arquivos, regras, configurações, histórico)")
     p.add_argument("--update-intel", action="store_true",
                    help="atualiza os feeds de inteligência de ameaças (Feodo, URLhaus, ThreatFox, CISA KEV)")
     p.add_argument("--smoke-test", metavar="PNG", help=argparse.SUPPRESS)
@@ -169,6 +171,12 @@ def main(argv: list[str] | None = None) -> int:
         for line in install.uninstall():
             print("-", line)
         return 0
+    if args.selfcheck:
+        from . import selfprotect
+        checks = selfprotect.run_all()
+        for c in checks:
+            print(f"{ {True: 'OK  ', False: 'ERRO', None: 'N/D '}[c['ok']] } {c['nome']}: {c['detalhe']}")
+        return 1 if any(c["ok"] is False for c in checks) else 0
     if args.update_intel:
         from . import intel
         results = intel.update_all()

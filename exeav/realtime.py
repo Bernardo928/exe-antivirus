@@ -42,11 +42,17 @@ class _Handler(FileSystemEventHandler):
 
     def on_modified(self, event):
         if not event.is_directory:
+            self.rt.canary_event(event.src_path, "modificado")
             self.rt.enqueue(event.src_path, modified=True)
 
     def on_moved(self, event):
         if not event.is_directory:
+            self.rt.canary_event(event.src_path, "renomeado")
             self.rt.enqueue(event.dest_path, modified=True)
+
+    def on_deleted(self, event):
+        if not event.is_directory:
+            self.rt.canary_event(event.src_path, "apagado")
 
     def on_closed(self, event):
         if not event.is_directory:
@@ -78,6 +84,10 @@ class RealtimeProtection:
         self.processes_checked = 0
         self.watched: list[str] = []
         self.errors: list[str] = []
+        self.canaries: set[str] = set()
+        self._canary_names: set[str] = set()
+        self._canary_redo = 0.0
+        self._last_canary_alert = 0.0
 
     @property
     def running(self) -> bool:
@@ -102,6 +112,7 @@ class RealtimeProtection:
                     self.errors.append(f"{d}: {e}")
             self._observer.daemon = True
             self._observer.start()
+        self._setup_canaries()
         t = threading.Thread(target=self._file_loop, daemon=True, name="rt-files")
         t.start()
         self._threads = [t]
@@ -161,6 +172,62 @@ class RealtimeProtection:
                 self._scan_path(p)
             if self.settings.ransomware_shield:
                 self._ransomware_check()
+            if self._canary_redo and now >= self._canary_redo:
+                self._canary_redo = 0.0
+                self._setup_canaries()
+
+    # ------------------------------------------------------------------ arquivos-isca
+    def _setup_canaries(self) -> None:
+        from . import canary
+        if not (self.settings.ransomware_shield and self.settings.ransomware_canaries):
+            self.canaries = set()
+            return
+        try:
+            self.canaries = set(canary.ensure(canary.default_dirs(self.watched)))
+            self._canary_names = {os.path.basename(p) for p in self.canaries}
+        except Exception as e:  # noqa: BLE001
+            self.errors.append(f"arquivos-isca: {e}")
+
+    def canary_event(self, path: str, event: str) -> None:
+        if not self.canaries or os.path.basename(path) not in self._canary_names or path not in self.canaries:
+            return
+        from . import canary
+        if not canary.tripped(path, event):
+            if event == "apagado":
+                history.log("ransomware", "Arquivo-isca apagado (recriado em seguida)", path)
+                self._canary_redo = time.time() + 5
+            return
+        now = time.time()
+        if now - self._last_canary_alert < 30:
+            return
+        self._last_canary_alert = now
+        # quem está escrevendo AGORA (janela curta medida na hora: o ataque continua cifrando)
+        base = _io_snapshot()
+        time.sleep(0.8)
+        top = self._culprit(0, base=base, min_bytes=1024)
+        info = {"files": [path], "count": 1, "process": top, "canary": path, "event": event}
+        history.log("ransomware", f"ARQUIVO-ISCA {event.upper()}: ataque de ransomware em andamento"
+                    + (f" — processo suspeito: {top['name']} (PID {top['pid']})" if top else ""), path)
+        if top and top.get("can_suspend") and self.settings.realtime_kill_malicious_process:
+            try:
+                from .system import processes
+                processes.suspend(top["pid"])
+                info["suspended"] = True
+                history.log("bloqueio", f"Processo {top['name']} (PID {top['pid']}) SUSPENSO: mexeu no arquivo-isca")
+            except Exception:
+                pass
+        from . import incidents
+        incidents.report(None, "anti-ransomware (isca)", pid=(top or {}).get("pid"),
+                         action="processo suspenso" if info.get("suspended") else "alerta",
+                         behavior={"title": "Ransomware: arquivo-isca atacado", "verdict": "malicioso", "score": 100,
+                                   "critical": True, "key": f"canary-{(top or {}).get('exe', '')}",
+                                   "path": (top or {}).get("exe", ""),
+                                   "indicators": [{"id": "ransom.canary", "name": f"Arquivo-isca {event}",
+                                                   "category": "Ransomware", "weight": 100, "evidence": [path],
+                                                   "description": "Um programa alterou/renomeou um arquivo-isca que "
+                                                                  "nenhum programa legítimo tem motivo para tocar."}]})
+        self._canary_redo = now + 5
+        self.callback("ransomware", info)
 
     def _scan_path(self, path: str) -> None:
         try:
@@ -271,13 +338,17 @@ class RealtimeProtection:
                                                        "evidence": encrypted[:20]}]})
             self.callback("ransomware", info)
 
-    def _culprit(self, enc_bytes: int) -> dict | None:
+    def _culprit(self, enc_bytes: int, base: dict | None = None, min_bytes: int = 16 * 1024) -> dict | None:
         """Processo que mais escreveu DURANTE a janela do ataque (não o total acumulado desde que abriu).
 
         Nunca aponta para suspensão: o próprio antivírus, quem o iniciou (terminal, sessão), processos
         críticos ou programas íntegros do sistema/assinados — esses apenas aparecem no alerta."""
         now_snap = _io_snapshot()
-        base = self._io_samples[0][1] if self._io_samples else {}
+        if base is None:
+            base = self._io_samples[0][1] if self._io_samples else {}
+            t0 = self._io_samples[0][0] if self._io_samples else 0
+        else:
+            t0 = time.time() - 1
         protected = _self_and_ancestors()
         best, best_delta = None, 0
         for pid, (ctime, wb, wc, name, exe) in now_snap.items():
@@ -286,13 +357,13 @@ class RealtimeProtection:
             old = base.get(pid)
             if old and old[0] == ctime:
                 delta = max(wb - old[1], wc - old[2])
-            elif not base or ctime >= self._io_samples[0][0] - 1:
+            elif not base or ctime >= t0 - 1:
                 delta = max(wb, wc)  # processo nasceu durante o ataque
             else:
                 continue
             if delta > best_delta:
                 best_delta, best = delta, (pid, name, exe)
-        if best is None or best_delta < max(16 * 1024, enc_bytes // 4):
+        if best is None or best_delta < max(min_bytes, enc_bytes // 4):
             return None
         pid, name, exe = best
         can = True

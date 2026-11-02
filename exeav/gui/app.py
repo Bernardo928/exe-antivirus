@@ -91,6 +91,14 @@ def start_services(ctx, win) -> None:
                 firewall.reapply()
             except Exception:
                 pass
+        try:
+            from .. import selfprotect
+            bad = [c for c in selfprotect.run_all() if c["ok"] is False]
+            if bad:
+                ctx.bridge.boot_event.emit("status", "AUTOPROTEÇÃO: " + "; ".join(f"{c['nome']}: {c['detalhe'][:80]}"
+                                                                                   for c in bad))
+        except Exception:
+            pass
         msg = dnsguard.on_app_start(s.dns_blocked_sites)
         if msg:
             ctx.bridge.boot_event.emit("status", msg)

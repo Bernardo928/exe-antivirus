@@ -49,7 +49,9 @@ class RealtimePage(QWidget):
         self.c_proc.setChecked(s.realtime_process_monitor)
         self.c_kill.setChecked(s.realtime_kill_malicious_process)
         self.c_ransom.setChecked(s.ransomware_shield)
-        for c in (self.c_proc, self.c_kill, self.c_ransom):
+        self.c_canary = QCheckBox("Arquivos-isca nas pastas de documentos (reação imediata ao ransomware)")
+        self.c_canary.setChecked(s.ransomware_canaries)
+        for c in (self.c_proc, self.c_kill, self.c_ransom, self.c_canary):
             opts.lay.addWidget(c)
             c.toggled.connect(self.save_opts)
         row = QHBoxLayout()
@@ -122,6 +124,14 @@ class RealtimePage(QWidget):
         s.realtime_process_monitor = self.c_proc.isChecked()
         s.realtime_kill_malicious_process = self.c_kill.isChecked()
         s.ransomware_shield = self.c_ransom.isChecked()
+        if s.ransomware_canaries != self.c_canary.isChecked():
+            s.ransomware_canaries = self.c_canary.isChecked()
+            if not s.ransomware_canaries:
+                from ... import canary
+                canary.remove_all()
+                self.ctx.realtime.canaries = set()
+            elif self.ctx.realtime.running:
+                self.ctx.realtime._setup_canaries()
         s.auto_action = "quarantine" if self.action.currentIndex() == 0 else "notify"
         self.ctx.apply_settings()
 

@@ -37,6 +37,14 @@ jobs:
       - name: Autoteste pelo código-fonte
         run: python main.py --selftest
 
+      - name: Benchmark reproduzível (falsos positivos em arquivos reais do sistema + detecção)
+        run: python tools/benchmark.py --benign 3000 --out dist/benchmark --max-fpr 0.01 --min-recall 0.95
+
+      - name: Inteligência de ameaças com os feeds reais (abuse.ch, CISA)
+        continue-on-error: true
+        shell: bash
+        run: EXEAV_DATA_DIR=$RUNNER_TEMP/exeav-intel python main.py --update-intel
+
       - name: Inno Setup (Windows)
         if: runner.os == 'Windows'
         run: choco install innosetup -y --no-progress
@@ -56,6 +64,8 @@ jobs:
           $env:EXEAV_DATA_DIR = "$env:RUNNER_TEMP\exeav-data"
           $p = Start-Process -FilePath "dist\ExeAntivirus\ExeAntivirus.exe" -ArgumentList "--selftest" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "autoteste falhou: $($p.ExitCode)" }
+          $p = Start-Process -FilePath "dist\ExeAntivirus\ExeAntivirus.exe" -ArgumentList "--selfcheck" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "verificação de integridade do programa compilado falhou" }
           $p = Start-Process -FilePath "dist\ExeAntivirus\ExeAntivirus.exe" -ArgumentList "--smoke-test","$env:RUNNER_TEMP\tela.png" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "teste da interface falhou: $($p.ExitCode)" }
           Copy-Item "$env:RUNNER_TEMP\tela.png" dist\captura-windows.png
@@ -75,6 +85,8 @@ jobs:
           if (!(Test-Path "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\EXE Antivirus\EXE Antivirus.lnk")) { throw "atalho do menu Iniciar não criado" }
           $p = Start-Process "$dir\ExeAntivirus.exe" -ArgumentList '--selftest' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "autoteste do programa instalado falhou" }
+          $p = Start-Process "$dir\ExeAntivirus.exe" -ArgumentList '--selfcheck' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "integridade do programa instalado falhou" }
           schtasks /Query /TN "EXE Antivirus" /V /FO LIST
           if ($LASTEXITCODE -ne 0) { throw "tarefa de inicialização não criada" }
           $v = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging').EnableScriptBlockLogging
@@ -98,6 +110,7 @@ jobs:
           export EXEAV_DATA_DIR=$RUNNER_TEMP/exeav-appimage
           A=$(ls dist/*.AppImage)
           "$A" --selftest
+          "$A" --selfcheck
           "$A" --smoke-test dist/captura-appimage.png
           export HOME=$RUNNER_TEMP/home && mkdir -p "$HOME"
           "$A" --install-system --autostart
@@ -113,6 +126,7 @@ jobs:
         run: |
           export EXEAV_DATA_DIR=$RUNNER_TEMP/exeav-data
           dist/ExeAntivirus/ExeAntivirus --selftest
+          dist/ExeAntivirus/ExeAntivirus --selfcheck
           dist/ExeAntivirus/ExeAntivirus --smoke-test dist/captura-linux.png
           ./dist/*-portatil --selftest
 
@@ -126,4 +140,5 @@ jobs:
             dist/*-instalador.exe
             dist/*.AppImage
             dist/captura-*.png
+            dist/benchmark/*
           if-no-files-found: error

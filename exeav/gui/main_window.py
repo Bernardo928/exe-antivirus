@@ -15,6 +15,7 @@ from .pages.botnet import BotnetPage
 from .pages.dashboard import DashboardPage
 from .pages.firewall import FirewallPage
 from .pages.history import HistoryPage
+from .pages.intel_center import IntelCenterPage
 from .pages.lab import LabPage
 from .pages.quarantine import QuarantinePage
 from .pages.realtime import RealtimePage
@@ -33,6 +34,7 @@ NAV = [
     ("usb", "Pen drives", "usb"),
     ("web", "Proteção Web", "web"),
     ("firewall", "Firewall", "wall"),
+    ("intel", "Zero-Day && Intel", "bug"),
     ("quarantine", "Quarentena", "lock"),
     ("lab", "Sala de Análise", "flask"),
     ("recovery", "Recuperação", "lifebuoy"),
@@ -89,7 +91,7 @@ class MainWindow(QMainWindow):
         group = QButtonGroup(self)
         group.setExclusive(True)
         factories = {"dashboard": DashboardPage, "scan": ScanPage, "realtime": RealtimePage, "botnet": BotnetPage,
-                     "usb": UsbPage, "web": WebPage, "firewall": FirewallPage,
+                     "usb": UsbPage, "web": WebPage, "firewall": FirewallPage, "intel": IntelCenterPage,
                      "quarantine": QuarantinePage, "lab": LabPage, "recovery": RecoveryPage,
                      "processes": ProcessesPage, "startup": StartupPage, "network": NetworkPage,
                      "history": HistoryPage, "settings": SettingsPage}
@@ -133,6 +135,7 @@ class MainWindow(QMainWindow):
         ctx.bridge.usb_event.connect(self._on_usb_event)
         ctx.bridge.script_event.connect(self._on_script_event)
         ctx.bridge.boot_event.connect(self._on_boot_event)
+        ctx.bridge.incident_event.connect(self._on_incident)
         ctx.bridge.scan_finished.connect(self._on_scan_finished)
         ctx.bridge.scan_threat.connect(lambda r: self.statusBar().showMessage(f"Ameaça encontrada: {r.threat_name} — {r.path}", 8000))
         self._setup_tray()
@@ -223,6 +226,13 @@ class MainWindow(QMainWindow):
         elif kind == "suspeito":
             self.notify("Comportamento suspeito de bot", f"{rep.name} (PID {rep.pid}): " + "; ".join(rep.reasons()[:2]),
                         critical=False)
+
+    def _on_incident(self, inc, new):
+        # um alerta por incidente novo e relevante; repetições do mesmo evento só somam ocorrências
+        if new and inc.get("desconhecida") and inc.get("classificacao") in ("alto risco", "crítico"):
+            self.notify("Ameaça desconhecida em investigação",
+                        f"{inc.get('ameaca')} — confiança {inc.get('confianca') or 'baixa'}\n"
+                        f"{(inc.get('arquivo') or '')[:120]}\nVeja as evidências em Zero-Day & Intel.")
 
     def _on_usb_event(self, kind, data):
         if kind == "inserted":

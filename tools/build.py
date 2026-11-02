@@ -122,6 +122,16 @@ def build_installer(version: str) -> Path:
     return out
 
 
+def write_integrity_manifest(pkg_dir: Path) -> None:
+    """SHA-256 de todos os arquivos da instalação: o antivírus confere a própria integridade ao abrir."""
+    import json
+
+    from exeav.selfprotect import MANIFEST, build_manifest
+    m = build_manifest(pkg_dir)
+    (pkg_dir / MANIFEST).write_text(json.dumps(m, indent=0), "utf-8")
+    print(f"manifesto de integridade: {len(m['arquivos'])} arquivos")
+
+
 def main():
     onefile = "--onefile" in sys.argv
     run([sys.executable, ROOT / "tools" / "build_rules.py"])
@@ -137,6 +147,8 @@ def main():
         shutil.copy(ROOT / "packaging" / "install-linux.sh", pkg_dir / "install-linux.sh")
         os.chmod(pkg_dir / "install-linux.sh", 0o755)
         shutil.copy(ROOT / "assets" / "icon.png", pkg_dir / "icon.png")
+    write_integrity_manifest(pkg_dir)
+    if not IS_WIN:
         out = ROOT / "dist" / f"ExeAntivirus-{VERSION}-{plat}-{arch}.tar.gz"
         with tarfile.open(out, "w:gz") as t:
             t.add(pkg_dir, arcname="ExeAntivirus")

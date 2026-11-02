@@ -28,6 +28,7 @@ class Bridge(QObject):
     usb_event = Signal(str, object)
     script_event = Signal(str, object)
     boot_event = Signal(str, object)
+    incident_event = Signal(object, bool)
     history_event = Signal(str, str, str, str)
     quarantine_changed = Signal()
     lab_changed = Signal(str)
@@ -54,6 +55,7 @@ class AppContext:
         self.scanner: Scanner | None = None
         self._scan_thread: threading.Thread | None = None
         history.add_listener(lambda *a: self.bridge.history_event.emit(*a))
+        incidents.add_listener(lambda inc, new: self.bridge.incident_event.emit(inc, new))
 
     def _botnet_cb(self, kind: str, data) -> None:
         self.bridge.botnet_event.emit(kind, data)

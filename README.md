@@ -18,6 +18,7 @@ qualquer nome, e um arquivo inofensivo chamado `virus.exe` continua limpo.
 | **Pen drives** | Verifica pen drives, cartões de memória e HDs/SSDs externos USB assim que são conectados (em segundo plano, prioridade baixa). Detecta os truques de vírus de pen drive na raiz — `autorun.inf`, **vírus de atalho** (pastas escondidas trocadas por atalhos `.lnk` que rodam o vírus) e executáveis escondidos —, isola as ameaças e faz as pastas escondidas voltarem a aparecer |
 | **Proteção Web** | **DNS da Mullvad** criptografado com 6 filtros (sem filtro, anúncios, base com malware — recomendado —, estendido, família, tudo). Usa o DNS-over-HTTPS nativo do Windows 11, o DNS-over-TLS do systemd-resolved no Linux ou, sem suporte do sistema (Windows 10), um servidor DNS local do antivírus que fala com a Mullvad por HTTPS — e devolve o DNS original se o antivírus for fechado. **Bloqueio de sites** escolhidos por você (arquivo hosts; no servidor local, também todos os subdomínios) |
 | **Firewall** | Integração com firewalls de código aberto: **ufw** e **firewalld** (regras permanentes), **nftables**/**iptables** (reaplicadas a cada boot) e **OpenSnitch** (cortar a internet de um programa específico); no Windows, Windows Firewall. Lista os firewalls encontrados, IPs bloqueados e programas sem internet |
+| **Zero-Day & Intel** | Centro de incidentes: toda detecção vira um registro com SHA-256/SHA-512/SHA3-256, origem do download, assinatura digital, processo e cadeia de processos, conexões, regras, **nível de confiança** (multi-sinal) e evidência preservada; ameaças sem assinatura conhecida ficam "em investigação" (nunca anunciadas como zero-day confirmado). Revisão (confirmar / **falso positivo** com motivo / resolvido), exportação HTML/JSON, busca. Abas de **inteligência de ameaças** (Feodo, URLhaus, ThreatFox, CISA KEV — validados, versionados, com expiração), **falsos positivos** (exclusões por SHA-256, revogáveis, regras que mais erram) e **autoproteção** (integridade dos arquivos, configurações, histórico e quarentena) |
 | **Quarentena** | Ameaças isoladas e **cifradas** (não executáveis); restaurar, restaurar em outro local, excluir, enviar para análise |
 | **Sala de Análise** | Recebe o arquivo do vírus (neutralizado) e mostra **por que** ele é vírus — cada evidência, seu peso e onde foi encontrada — e **todas as informações**: hashes (MD5/SHA-1/SHA-256/SHA-512), tipo real, entropia (com gráfico), cabeçalhos, seções, importações (APIs perigosas destacadas), exportações, recursos, informações de versão, certificados, strings (URLs, IPs, e-mails, registro, caminhos, carteiras bitcoin, .onion), macros VBA extraídas, conteúdo ofuscado decodificado, hex, conteúdo de compactados e técnicas **MITRE ATT&CK**. Exporta relatório HTML/JSON |
 | **Recuperação** | Encontra e repara arquivos corrompidos (ZIP/DOCX/XLSX/PPTX/ODT, PDF, PNG, JPEG, GIF, JSON, textos), identifica arquivos cifrados por ransomware e cria/restaura **backups protegidos** de pastas |
@@ -69,7 +70,17 @@ python main.py --botnet 10     # observa a rede por 10 s e lista comportamento d
 python main.py --selftest      # autoteste
 python main.py --install-system --autostart   # integra ao sistema (--pslog no Windows, --boot-service no Linux)
 python main.py --uninstall-system             # desfaz tudo o que o antivírus mudou no sistema
+python main.py --selfcheck     # integridade do próprio antivírus
+python main.py --update-intel  # atualiza os feeds de inteligência de ameaças
+python tools/benchmark.py      # benchmark reproduzível (falsos positivos, precisão, recall, F1, tempo)
 ```
+
+## Documentação técnica
+
+[Auditoria](docs/AUDITORIA.md) · [Arquitetura e motor](docs/ARQUITETURA.md) ·
+[Segurança, autoproteção e privacidade](docs/SEGURANCA-E-PRIVACIDADE.md) ·
+[Zero-day e falsos positivos](docs/ZERO-DAY-E-FALSOS-POSITIVOS.md) · [Testes e benchmark](docs/TESTES-E-BENCHMARK.md) ·
+[Instalação e desinstalação](docs/INSTALACAO.md) · [Maturidade, pendências e limitações](docs/MATURIDADE.md)
 
 ## Instalar
 
