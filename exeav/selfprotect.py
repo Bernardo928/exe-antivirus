@@ -20,11 +20,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 from . import config, history, paths
 
 MANIFEST = "integrity.json"
+# o instalador do Windows (Inno Setup) grava o próprio desinstalador na raiz da pasta depois do build
+_INSTALLER_FILES = re.compile(r"^unins\d{3}\.(?:exe|dat|msg)$", re.I)
 
 
 def build_manifest(root: Path) -> dict:
@@ -65,9 +68,11 @@ def check_program_files(root: Path | None = None) -> dict:
             changed.append(rel)
     extra = []
     for p in root.rglob("*"):
-        if p.is_file() and p.name != MANIFEST and p.relative_to(root).as_posix() not in expected \
-                and p.suffix.lower() in (".exe", ".dll", ".so", ".pyd", ".py", ".bin"):
-            extra.append(p.relative_to(root).as_posix())
+        rel = p.relative_to(root).as_posix()
+        if p.is_file() and p.name != MANIFEST and rel not in expected \
+                and p.suffix.lower() in (".exe", ".dll", ".so", ".pyd", ".py", ".bin") \
+                and not _INSTALLER_FILES.match(rel):
+            extra.append(rel)
     ok = not (changed or missing or extra)
     det = f"{len(expected)} arquivo(s) conferido(s)."
     if not ok:

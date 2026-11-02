@@ -236,10 +236,14 @@ def test_program_integrity_manifest(tmp_path):
     (root / "lib" / "a.so").write_bytes(b"biblioteca")
     (root / selfprotect.MANIFEST).write_text(json.dumps(selfprotect.build_manifest(root)))
     assert selfprotect.check_program_files(root)["ok"] is True
+    (root / "unins000.exe").write_bytes(b"MZ desinstalador")      # gravado pelo instalador do Windows: aceito
+    assert selfprotect.check_program_files(root)["ok"] is True
+    (root / "lib" / "unins000.exe").write_bytes(b"MZ")           # fora da raiz: estranho
     (root / "lib" / "a.so").write_bytes(b"biblioteca adulterada")
     (root / "lib" / "injetada.dll").write_bytes(b"MZ")
     chk = selfprotect.check_program_files(root)
     assert chk["ok"] is False and chk["alterados"] == ["lib/a.so"] and "lib/injetada.dll" in chk["estranhos"]
+    assert "lib/unins000.exe" in chk["estranhos"] and "unins000.exe" not in chk["estranhos"]
 
 
 def test_selfprotect_run_all_reports_every_check():
