@@ -145,14 +145,15 @@ class SettingsStore:
     def save(self) -> None:
         with self._lock:
             text = json.dumps(asdict(self.settings), indent=2, ensure_ascii=False)
+            data = text.encode("utf-8")
             tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(text, "utf-8")
+            tmp.write_bytes(data)      # bytes exatos: no Windows write_text trocaria \n por \r\n e o hash não bateria
             os.replace(tmp, self.path)
             # cópia e hash do que o PRÓPRIO antivírus gravou: permite detectar alteração feita por fora
             # (ex.: malware desligando a proteção editando o arquivo) e restaurar
             try:
-                self.path.with_suffix(".lastgood.json").write_text(text, "utf-8")
-                self.path.with_suffix(".sha256").write_text(hashlib.sha256(text.encode("utf-8")).hexdigest(), "utf-8")
+                self.path.with_suffix(".lastgood.json").write_bytes(data)
+                self.path.with_suffix(".sha256").write_text(hashlib.sha256(data).hexdigest(), "utf-8")
             except OSError:
                 pass
 

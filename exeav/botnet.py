@@ -208,6 +208,7 @@ class BotnetShield:
         self.interval = interval
         self.watch_pids = watch_pids      # testes: limita o escudo a estes processos
         self.dry_run = dry_run            # só observa, nunca age
+        self._errors_logged: set[str] = set()
         self.c2 = C2Blocklist()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -254,8 +255,11 @@ class BotnetShield:
                 self.sample()
                 for rep in self.evaluate():
                     self._act(rep)
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 — o escudo não pode parar, mas o erro fica registrado
+                key = f"{type(e).__name__}: {e}"[:200]
+                if key not in self._errors_logged:
+                    self._errors_logged.add(key)
+                    history.log("erro", f"Escudo anti-botnet: {key}")
             self._stop.wait(self.interval)
 
     # ------------------------------------------------------------------ coleta
@@ -495,7 +499,10 @@ class BotnetShield:
             history.log("anti-botnet", f"Comportamento suspeito de bot: {rep.name} (PID {rep.pid}, {rep.score} pts)",
                         rep.exe)
             if not self.dry_run:
-                self._report(rep, proc_info)
+                try:
+                    self._report(rep, proc_info)
+                except Exception as e:  # noqa: BLE001
+                    history.log("erro", f"Falha ao registrar incidente de botnet: {type(e).__name__}: {e}")
             self.callback("suspeito", rep)
             return
         actions = []
@@ -510,7 +517,10 @@ class BotnetShield:
             except Exception as e:
                 actions.append(f"falha ao encerrar ({e})")
         target = self._file_to_isolate(rep)
-        pre = incidents.collect(target) if target else {}
+        try:
+            pre = incidents.collect(target) if target else {}
+        except Exception:  # noqa: BLE001
+            pre = {}
         if can_act and target and self.settings.auto_action == "quarantine":
             try:
                 self.quarantine.isolate(ScanResult(path=target, verdict=MALICIOUS, score=rep.score,
@@ -537,7 +547,10 @@ class BotnetShield:
         rep.action = "; ".join(actions) or "alerta"
         history.log("bloqueio" if can_act else "anti-botnet",
                     f"BOTNET: {rep.family} — {rep.name} (PID {rep.pid}, {rep.score} pts): {rep.action}", rep.exe)
-        self._report(rep, proc_info, pre, target or "")
+        try:
+            self._report(rep, proc_info, pre, target or "")
+        except Exception as e:  # noqa: BLE001 — registrar evidências nunca pode impedir o aviso
+            history.log("erro", f"Falha ao registrar incidente de botnet: {type(e).__name__}: {e}")
         self.callback("botnet", rep)
 
     def _c2_ips(self) -> set[str]:

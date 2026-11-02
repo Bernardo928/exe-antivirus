@@ -256,8 +256,8 @@ def test_canaries_created_and_tripped(tmp_path):
     assert len(active) == 2 and all(os.path.isfile(p) for p in active)
     p = next(x for x in active if x.endswith(".txt"))
     assert not canary.tripped(p, "modificado")                 # intacta
-    with open(p, "wb") as f:
-        f.write(os.urandom(200))                                # "cifrada"
+    with open(p, "r+b") as f:                                   # "cifrada" no lugar (como o ransomware faz)
+        f.write(os.urandom(200))
     assert canary.tripped(p, "modificado")
     assert canary.tripped(p, "renomeado")
     assert not canary.tripped(p, "apagado")                     # apagar sozinho não dispara bloqueio

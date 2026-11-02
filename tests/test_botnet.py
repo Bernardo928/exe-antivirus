@@ -46,8 +46,13 @@ def _wait(cond, timeout=15.0):
     return False
 
 
-def _bot_event(events, pid):
-    return next((d for k, d in events if k == "botnet" and d.pid == pid), None)
+def _bot_event(events, pid, timeout=30.0):
+    """O bot é encerrado primeiro; o aviso sai depois que as evidências são coletadas (na primeira vez a
+    consulta de assinatura de pacotes pode levar alguns segundos) — espera o aviso chegar."""
+    found = []
+    _wait(lambda: found.append(next((d for k, d in events if k == "botnet" and d.pid == pid), None)) or found[-1],
+          timeout)
+    return found[-1] if found else None
 
 
 def test_worm_scanner_is_killed_and_script_isolated(tmp_path):

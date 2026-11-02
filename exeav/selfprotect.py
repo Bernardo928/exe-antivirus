@@ -132,9 +132,9 @@ def restore_config() -> None:
     """Volta às últimas configurações gravadas pelo próprio antivírus."""
     st = config.store()
     lg = st.path.with_suffix(".lastgood.json")
-    text = lg.read_text("utf-8")
-    json.loads(text)
-    st.path.write_text(text, "utf-8")
+    data = lg.read_bytes()
+    json.loads(data.decode("utf-8"))
+    st.path.write_bytes(data)
     st.settings = st._load()
     st.save()
     history.log("autoproteção", "Configurações restauradas para a última versão gravada pelo antivírus")

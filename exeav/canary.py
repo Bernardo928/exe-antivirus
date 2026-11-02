@@ -96,6 +96,9 @@ def ensure(dirs: list[str]) -> list[str]:
                 tmp = os.path.join(folder, f".{name}.exeav-tmp")
                 with open(tmp, "wb") as f:
                     f.write(data)
+                if paths.IS_WINDOWS and os.path.exists(p):
+                    import ctypes
+                    ctypes.windll.kernel32.SetFileAttributesW(p, 0x80)   # o Windows não substitui arquivo oculto
                 os.replace(tmp, p)             # gravação atômica: nunca existe isca pela metade
                 if paths.IS_WINDOWS:
                     import ctypes
