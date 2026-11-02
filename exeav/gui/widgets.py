@@ -49,9 +49,13 @@ def run_bg(fn, on_done=None, on_error=None) -> None:
         try:
             v = fn()
         except Exception as e:  # noqa: BLE001
-            r.failed.emit(e)
+            ok, payload = False, e
         else:
-            r.done.emit(v)
+            ok, payload = True, v
+        try:
+            (r.done if ok else r.failed).emit(payload)
+        except RuntimeError:
+            pass   # a janela foi fechada antes de a tarefa terminar: não há mais a quem entregar o resultado
 
     threading.Thread(target=work, daemon=True).start()
 
