@@ -13,13 +13,16 @@ qualquer nome, e um arquivo inofensivo chamado `virus.exe` continua limpo.
 |---|---|
 | **Painel** | Estado da proteção, estatísticas, atalhos e atividade recente |
 | **Verificação** | Scan rápido (downloads, área de trabalho, temporários, inicialização e todos os processos em execução), scan completo (todos os discos), scan de pasta e de arquivos; pausar/parar; ações sobre os resultados |
-| **Tempo Real** | Monitor de arquivos (criados/alterados/movidos), monitor de processos (analisa cada programa executado, os scripts rodados por interpretadores e comandos passados direto na linha de comando — ataques "sem arquivo" — e pode encerrá-los), escudo anti-ransomware (detecta criptografia em massa e suspende o processo) |
+| **Tempo Real** | Monitor de arquivos (criados/alterados/movidos), monitor de processos (analisa cada programa executado, os scripts rodados por interpretadores e comandos passados direto na linha de comando — ataques "sem arquivo" — e pode encerrá-los), escudo anti-ransomware (detecta criptografia em massa e suspende o processo) e **análise de scripts por dentro**: no Windows lê o código do PowerShell já decodificado pelo próprio Windows (registro de blocos de script, mesmo com `-EncodedCommand`, `IEX` e ofuscação); no Linux lê o script que o shell está executando — inclusive o que o vírus apagou do disco — e detecta `curl \| sh` |
 | **Anti-Botnet** | Impede que o PC vire parte de uma botnet: vigia a rede de cada programa e bloqueia conexão com servidores de comando (C2) conhecidos, varredura de outras máquinas para se espalhar (Telnet/SSH/SMB/RDP/ADB), ataques DDoS, contato periódico com servidor (beaconing), portas de IRC/trojans/Tor/mineração, backdoor aberto para a rede e programas rodando de pasta temporária, apagados do disco ou disfarçados de processo do sistema. Encerra o bot, isola o executável (ou o script, se rodar por um interpretador) e bloqueia o servidor de comando no firewall (Windows Firewall, nftables ou iptables). Lista de C2 atualizável (abuse.ch Feodo Tracker) ou importada |
+| **Pen drives** | Verifica pen drives, cartões de memória e HDs/SSDs externos USB assim que são conectados (em segundo plano, prioridade baixa). Detecta os truques de vírus de pen drive na raiz — `autorun.inf`, **vírus de atalho** (pastas escondidas trocadas por atalhos `.lnk` que rodam o vírus) e executáveis escondidos —, isola as ameaças e faz as pastas escondidas voltarem a aparecer |
+| **Proteção Web** | **DNS da Mullvad** criptografado com 6 filtros (sem filtro, anúncios, base com malware — recomendado —, estendido, família, tudo). Usa o DNS-over-HTTPS nativo do Windows 11, o DNS-over-TLS do systemd-resolved no Linux ou, sem suporte do sistema (Windows 10), um servidor DNS local do antivírus que fala com a Mullvad por HTTPS — e devolve o DNS original se o antivírus for fechado. **Bloqueio de sites** escolhidos por você (arquivo hosts; no servidor local, também todos os subdomínios) |
+| **Firewall** | Integração com firewalls de código aberto: **ufw** e **firewalld** (regras permanentes), **nftables**/**iptables** (reaplicadas a cada boot) e **OpenSnitch** (cortar a internet de um programa específico); no Windows, Windows Firewall. Lista os firewalls encontrados, IPs bloqueados e programas sem internet |
 | **Quarentena** | Ameaças isoladas e **cifradas** (não executáveis); restaurar, restaurar em outro local, excluir, enviar para análise |
 | **Sala de Análise** | Recebe o arquivo do vírus (neutralizado) e mostra **por que** ele é vírus — cada evidência, seu peso e onde foi encontrada — e **todas as informações**: hashes (MD5/SHA-1/SHA-256/SHA-512), tipo real, entropia (com gráfico), cabeçalhos, seções, importações (APIs perigosas destacadas), exportações, recursos, informações de versão, certificados, strings (URLs, IPs, e-mails, registro, caminhos, carteiras bitcoin, .onion), macros VBA extraídas, conteúdo ofuscado decodificado, hex, conteúdo de compactados e técnicas **MITRE ATT&CK**. Exporta relatório HTML/JSON |
 | **Recuperação** | Encontra e repara arquivos corrompidos (ZIP/DOCX/XLSX/PPTX/ODT, PDF, PNG, JPEG, GIF, JSON, textos), identifica arquivos cifrados por ransomware e cria/restaura **backups protegidos** de pastas |
 | **Processos** | Programas em execução; verificar todos, encerrar, analisar |
-| **Inicialização** | Chaves Run, Winlogon, pasta Inicializar e tarefas agendadas (Windows); autostart, systemd, cron, `.bashrc`, `ld.so.preload` (Linux); verificar e desativar com backup |
+| **Inicialização** | **Proteção ao ligar**: toda vez que o computador liga, reaplica o firewall, avalia cada programa que inicia junto (Run, Winlogon, pasta Inicializar, tarefas agendadas; autostart, systemd, cron, `.bashrc`, `ld.so.preload`) e **bloqueia** vírus, comandos suspeitos e programas desconhecidos — encerra, corta a internet no firewall e tira da inicialização com cópia de segurança (modos: bloquear desconhecidos, bloquear tudo que não for do sistema, só avisar). Depois faz um **scan rápido em segundo plano** com prioridade baixa. Itens novos que aparecem com o PC ligado também são avaliados. "Liberar" desfaz tudo |
 | **Rede** | Conexões por programa com alerta de portas de RATs/mineradores/backdoors e verificação do arquivo *hosts* contra redirecionamentos |
 | **Histórico** | Registro de tudo (filtro, busca, exportação CSV) |
 | **Configurações** | Sensibilidade, limites, exclusões, compactados, cache, multiprocessamento, agendamento diário, assinaturas por hash (atualização online/importação), regras personalizadas, iniciar com o sistema, bandeja |
@@ -64,20 +67,36 @@ python main.py --quick         # scan rápido sem interface
 python main.py --analyze ARQ   # relatório da Sala de Análise no terminal (--json)
 python main.py --botnet 10     # observa a rede por 10 s e lista comportamento de botnet (não age)
 python main.py --selftest      # autoteste
+python main.py --install-system --autostart   # integra ao sistema (--pslog no Windows, --boot-service no Linux)
+python main.py --uninstall-system             # desfaz tudo o que o antivírus mudou no sistema
 ```
+
+## Instalar
+
+* **Windows:** `ExeAntivirus-<versão>-windows-x64-instalador.exe` — instala em Arquivos de Programas, cria
+  atalhos no menu Iniciar (e na área de trabalho, opcional), configura a **proteção desde a inicialização**
+  (tarefa agendada no logon com privilégios de administrador, sem pedir UAC a cada boot) e, opcionalmente,
+  liga o registro de scripts do PowerShell. O desinstalador desfaz tudo: tarefa, DNS, sites bloqueados,
+  regras de firewall e o registro do PowerShell.
+* **Linux:** `ExeAntivirus-<versão>-linux-x64.AppImage` — roda em qualquer distribuição
+  (`chmod +x` e abrir). No primeiro uso ele se adiciona ao menu de aplicativos e à inicialização automática.
+  Para o firewall ser reaplicado a cada boot antes do login:
+  `sudo ./ExeAntivirus-*.AppImage --install-system --autostart --boot-service`.
+  Para remover tudo: `./ExeAntivirus-*.AppImage --uninstall-system`.
 
 ## Compilar
 
 ```bash
 pip install -r requirements-dev.txt
-python tools/build.py --onefile
+python tools/build.py --onefile --installer   # Windows (precisa do Inno Setup 6)
+python tools/build.py --onefile --appimage    # Linux
 ```
 
 Gera em `dist/`:
-* Windows: `ExeAntivirus-<versão>-windows-x64.zip` (pasta com `ExeAntivirus.exe`) e
-  `ExeAntivirus-<versão>-windows-x64-portatil.exe` (arquivo único).
-* Linux: `ExeAntivirus-<versão>-linux-x64.tar.gz` (com `install-linux.sh` para criar o atalho no
-  menu) e `ExeAntivirus-<versão>-linux-x64-portatil`.
+* Windows: instalador `…-instalador.exe`, `ExeAntivirus-<versão>-windows-x64.zip` (pasta com
+  `ExeAntivirus.exe`) e `ExeAntivirus-<versão>-windows-x64-portatil.exe` (arquivo único).
+* Linux: `.AppImage`, `ExeAntivirus-<versão>-linux-x64.tar.gz` (com `install-linux.sh` para criar o
+  atalho no menu) e `ExeAntivirus-<versão>-linux-x64-portatil`.
 
 O GitHub Actions (`.github/workflows/build.yml`) roda os testes e compila para Windows e Linux a cada
 push; os executáveis ficam nos *artifacts* da execução.

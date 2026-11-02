@@ -4,12 +4,13 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLineEdit, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLineEdit, QMessageBox, QSpinBox, QVBoxLayout,
+                               QWidget)
 
 from ... import util
 from ...system import network, processes, startup
 from .. import theme
-from ..widgets import Card, DataTable, PageHeader, button, confirm, label, open_location, run_bg
+from ..widgets import Badge, Card, DataTable, PageHeader, button, confirm, label, open_location, run_bg
 
 
 def _send_to_lab(ctx, path: str):
@@ -139,88 +140,214 @@ class ProcessesPage(QWidget):
 
 # --------------------------------------------------------------------------- inicialização
 class StartupPage(QWidget):
+    """Programas que iniciam com o sistema + proteção ao ligar o computador."""
+    MODES = [("desconhecidos", "Bloquear programas desconhecidos (sem assinatura digital)"),
+             ("todos", "Bloquear tudo o que não for do sistema e não for liberado por mim"),
+             ("avisar", "Só avisar, não bloquear nada")]
+
     def __init__(self, ctx):
         super().__init__()
         self.ctx = ctx
-        self.items: list[dict] = []
-        self.verdicts: dict[str, object] = {}
+        s = ctx.settings
+        self.decisions: list = []
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 24)
         root.setSpacing(16)
-        root.addWidget(PageHeader("Inicialização", "Tudo o que roda automaticamente quando o computador liga: é onde "
-                                                   "malware se esconde para sobreviver a reinicializações.", "power"))
+        hdr = PageHeader("Inicialização", "Toda vez que o computador liga, o antivírus decide o que pode abrir junto "
+                                          "com o sistema, bloqueia o resto e faz um scan em segundo plano.", "power")
+        self.badge = Badge("", theme.MUTED)
+        self.toggle = button("Ativar", "power", "success")
+        self.toggle.clicked.connect(self.toggle_guard)
+        hdr.right.addWidget(self.badge)
+        hdr.right.addWidget(self.toggle)
+        root.addWidget(hdr)
+
+        opts = Card()
+        opts.lay.addWidget(label("Ao ligar o computador", "sectionTitle"))
+        row = QHBoxLayout()
+        row.addWidget(label("Programas que iniciam junto:", "muted"))
+        self.mode = QComboBox()
+        for _k, t in self.MODES:
+            self.mode.addItem(t)
+        self.mode.setCurrentIndex(next((i for i, (k, _t) in enumerate(self.MODES) if k == s.boot_block_mode), 0))
+        self.mode.currentIndexChanged.connect(self.save_opts)
+        row.addWidget(self.mode, 1)
+        opts.lay.addLayout(row)
+        row2 = QHBoxLayout()
+        self.c_scan = QCheckBox("Fazer um scan rápido em segundo plano")
+        self.c_scan.setChecked(s.boot_scan)
+        self.c_scan.toggled.connect(self.save_opts)
+        row2.addWidget(self.c_scan)
+        row2.addWidget(label("começando", "muted"))
+        self.delay = QSpinBox()
+        self.delay.setRange(0, 3600)
+        self.delay.setSuffix(" s depois de ligar")
+        self.delay.setValue(s.boot_scan_delay)
+        self.delay.valueChanged.connect(self.save_opts)
+        row2.addWidget(self.delay)
+        row2.addStretch(1)
+        opts.lay.addLayout(row2)
+        self.info = label("", "small", wrap=True)
+        opts.lay.addWidget(self.info)
+        root.addWidget(opts)
+
         card = Card()
         h = QHBoxLayout()
-        self.b_refresh = button("Atualizar", "refresh")
-        self.b_scan = button("Verificar alvos", "shield", "primary")
-        self.b_lab = button("Analisar", "flask")
-        self.b_disable = button("Desativar", "ban", "danger")
+        h.addWidget(label("Programas que iniciam com o sistema", "sectionTitle"))
         h.addStretch(1)
-        for b in (self.b_refresh, self.b_scan, self.b_lab, self.b_disable):
+        self.b_refresh = button("Atualizar", "refresh")
+        self.b_lab = button("Analisar", "flask")
+        self.b_allow = button("Liberar", "check", "success")
+        self.b_block = button("Bloquear", "ban", "danger")
+        self.b_now = button("Aplicar agora", "shield", "primary")
+        for b in (self.b_refresh, self.b_lab, self.b_allow, self.b_block, self.b_now):
             h.addWidget(b)
         card.lay.addLayout(h)
-        self.table = DataTable(["Nome", "Origem", "Situação", "Comando", "Arquivo alvo"], stretch_col=3)
-        for i, w in enumerate((200, 160, 210, 300)):
+        self.table = DataTable(["Nome", "Origem", "Decisão", "Motivo", "Comando"], stretch_col=4)
+        for i, w in enumerate((190, 150, 100, 300)):
             self.table.setColumnWidth(i, w)
         card.lay.addWidget(self.table)
-        card.lay.addWidget(label("Itens marcados como suspeitos usam comandos ocultos, codificados ou executam a partir "
-                                 "de pastas temporárias. Desativar guarda uma cópia para desfazer depois.", "small", wrap=True))
-        root.addWidget(card, 1)
+        root.addWidget(card, 2)
+
+        dis = Card()
+        dh = QHBoxLayout()
+        dh.addWidget(label("Bloqueados pelo antivírus", "sectionTitle"))
+        dh.addStretch(1)
+        self.b_restore = button("Liberar e devolver à inicialização", "restore")
+        dh.addWidget(self.b_restore)
+        dis.lay.addLayout(dh)
+        self.dis_table = DataTable(["Nome", "Origem", "Quando", "Comando"], stretch_col=3)
+        for i, w in enumerate((190, 150, 150)):
+            self.dis_table.setColumnWidth(i, w)
+        self.dis_table.setMaximumHeight(180)
+        dis.lay.addWidget(self.dis_table)
+        root.addWidget(dis, 1)
+
         self.b_refresh.clicked.connect(self.refresh)
-        self.b_scan.clicked.connect(self.scan)
-        self.b_lab.clicked.connect(lambda: [_send_to_lab(ctx, i["target"]) for i in self.table.selected_data()[:1] if i])
-        self.b_disable.clicked.connect(self.disable)
+        self.b_lab.clicked.connect(lambda: [_send_to_lab(ctx, d["item"]["target"])
+                                            for d in self.table.selected_data()[:1] if d])
+        self.b_allow.clicked.connect(self.allow_selected)
+        self.b_block.clicked.connect(self.block_selected)
+        self.b_now.clicked.connect(self.apply_now)
+        self.b_restore.clicked.connect(self.restore_selected)
+        ctx.bridge.boot_event.connect(self.on_event)
+        self._loaded = False
+        self.show_state()
 
+    # ------------------------------------------------------------------ opções
+    def save_opts(self, *_):
+        s = self.ctx.settings
+        s.boot_block_mode = self.MODES[self.mode.currentIndex()][0]
+        s.boot_scan = self.c_scan.isChecked()
+        s.boot_scan_delay = self.delay.value()
+        self.ctx.apply_settings()
+        self.show_state()
+
+    def toggle_guard(self):
+        g = self.ctx.boot
+        if g.running:
+            g.stop()
+        else:
+            g.start()
+        self.ctx.settings.boot_guard = g.running
+        self.ctx.apply_settings()
+        self.show_state()
+
+    def show_state(self):
+        g = self.ctx.boot
+        on = g.running
+        self.badge.set("Ativa" if on else "Desligada", theme.SUCCESS if on else theme.DANGER)
+        self.toggle.setText("Desativar" if on else "Ativar")
+        self.toggle.setObjectName("danger" if on else "success")
+        self.toggle.style().unpolish(self.toggle)
+        self.toggle.style().polish(self.toggle)
+        parts = []
+        if g.blocked_this_boot:
+            parts.append(f"{g.blocked_this_boot} programa(s) bloqueado(s) desde que o computador ligou.")
+        if g.boot_scan_state:
+            parts.append(f"Scan em segundo plano: {g.boot_scan_state}.")
+        parts.append("Bloquear = encerrar o programa, cortar a internet dele no firewall e tirá-lo da inicialização "
+                     "(com cópia de segurança). Itens novos que aparecem com o computador ligado também são avaliados.")
+        self.info.setText(" ".join(parts))
+
+    # ------------------------------------------------------------------ listas
     def refresh(self):
-        run_bg(startup.list_items, self._set)
+        self.b_refresh.setEnabled(False)
+        run_bg(lambda: (self.ctx.boot.classify(startup.list_items()), startup.list_disabled()), self._set,
+               lambda e: self.b_refresh.setEnabled(True))
 
-    def _set(self, items):
-        self.items = items
+    def _set(self, data):
+        decisions, disabled = data
+        self.b_refresh.setEnabled(True)
+        self._loaded = True
+        self.decisions = decisions
+        colors = {"liberado": theme.SUCCESS, "bloqueado": theme.DANGER, "aviso": theme.WARNING}
         self.table.clear_rows()
-        for it in items:
-            v = self.verdicts.get(it["target"])
-            if v is not None and v.is_threat:
-                st, col = f"{v.verdict.upper()}: {v.threat_name}", theme.VERDICT_COLORS[v.verdict]
-            elif it["suspicious"]:
-                st, col = "Comando suspeito", theme.WARNING
-            elif v is not None:
-                st, col = "Verificado: limpo", theme.SUCCESS
-            else:
-                st, col = "Não verificado", theme.MUTED
-            self.table.add_row([it["name"], it["source"], st, it["command"], it["target"] or "—"], data=it,
-                               colors={2: col})
+        with self.table.bulk():
+            for d in decisions:
+                it = d["item"]
+                self.table.add_row([it["name"], it["source"], d["decision"], d["reason"], it["command"]], data=d,
+                                   colors={2: colors.get(d["decision"], theme.MUTED)})
+        self.dis_table.clear_rows()
+        for r in disabled:
+            it = r["item"]
+            when = r.get("date", "")
+            when = f"{when[6:8]}/{when[4:6]} {when[9:11]}:{when[11:13]}" if len(when) >= 13 else when
+            self.dis_table.add_row([it["name"], it["source"], when, it["command"]], data=r)
+        self.show_state()
 
-    def scan(self):
-        targets = sorted({i["target"] for i in self.items if i["target"]})
-
-        def work():
-            return {t: self.ctx.engine.scan_file(t).result for t in targets
-                    if not self.ctx.engine.exclusions.is_excluded(t)}
-
-        def done(res):
-            self.verdicts.update(res)
-            self._set(self.items)
-        run_bg(work, done)
-
-    def disable(self):
-        sel = [i for i in self.table.selected_data() if i]
+    # ------------------------------------------------------------------ ações
+    def allow_selected(self):
+        sel = [d for d in self.table.selected_data() if d]
         if not sel:
             return
-        it = sel[0]
-        if not it["removable"]:
-            QMessageBox.information(self, "Inicialização", "Este item é do sistema ou exige edição manual "
-                                    f"(local: {it['location']}).")
+        d = sel[0]
+        self.ctx.boot.allow(d["key"], target=d["item"].get("target") or "")
+        self.refresh()
+
+    def block_selected(self):
+        sel = [d for d in self.table.selected_data() if d]
+        if not sel:
             return
-        if confirm(self, "Desativar", f"Desativar '{it['name']}' da inicialização?"):
-            try:
-                startup.disable_item(it)
-            except Exception as e:
-                QMessageBox.warning(self, "Desativar", f"Falhou (talvez precise de administrador): {e}")
-            self.refresh()
+        d = sel[0]
+        if not d["item"].get("removable", True):
+            QMessageBox.information(self, "Inicialização", "Este item é do sistema ou exige edição manual "
+                                    f"(local: {d['item']['location']}).")
+            return
+        if confirm(self, "Bloquear", f"Bloquear '{d['item']['name']}'? Ele será encerrado, perderá a internet e "
+                                     "não vai mais abrir junto com o computador."):
+            d["reason"] = "bloqueado por você"
+            run_bg(lambda: self.ctx.boot.block(d, remember=True), lambda _: self.refresh(),
+                   lambda e: (QMessageBox.warning(self, "Bloquear", f"Falhou (talvez precise de administrador): {e}"),
+                              self.refresh()))
+
+    def restore_selected(self):
+        sel = [r for r in self.dis_table.selected_data() if r]
+        if not sel:
+            return
+        r = sel[0]
+        it = r["item"]
+        from ...bootguard import item_key
+        try:
+            self.ctx.boot.allow(item_key(it), r["id"], it.get("target") or "")
+        except Exception as e:
+            QMessageBox.warning(self, "Liberar", f"Não foi possível restaurar (talvez precise de administrador): {e}")
+        self.refresh()
+
+    def apply_now(self):
+        self.b_now.setEnabled(False)
+        run_bg(self.ctx.boot.check_now, lambda _: (self.b_now.setEnabled(True), self.refresh()),
+               lambda e: (self.b_now.setEnabled(True), QMessageBox.warning(self, "Inicialização", str(e))))
+
+    def on_event(self, kind, data):
+        if kind in ("blocked", "boot_scan", "status"):
+            self.show_state()
+            if kind == "blocked" and self.isVisible():
+                self.refresh()
 
     def showEvent(self, e):
         super().showEvent(e)
-        if not self.items:
+        if not self._loaded:
             self.refresh()
 
 

@@ -5,13 +5,15 @@ import datetime
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
-                               QPushButton, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu,
+                               QMessageBox, QPushButton, QScrollArea, QStackedWidget, QSystemTrayIcon, QVBoxLayout,
+                               QWidget)
 
 from .. import APP_NAME, VERSION, config, scanner
 from . import icons, theme
 from .pages.botnet import BotnetPage
 from .pages.dashboard import DashboardPage
+from .pages.firewall import FirewallPage
 from .pages.history import HistoryPage
 from .pages.lab import LabPage
 from .pages.quarantine import QuarantinePage
@@ -20,12 +22,17 @@ from .pages.recovery import RecoveryPage
 from .pages.scan import ScanPage
 from .pages.settings import SettingsPage
 from .pages.system_pages import NetworkPage, ProcessesPage, StartupPage
+from .pages.usb import UsbPage
+from .pages.web import WebPage
 
 NAV = [
     ("dashboard", "Painel", "home"),
     ("scan", "Verificação", "search"),
     ("realtime", "Tempo Real", "activity"),
     ("botnet", "Anti-Botnet", "network"),
+    ("usb", "Pen drives", "usb"),
+    ("web", "Proteção Web", "web"),
+    ("firewall", "Firewall", "wall"),
     ("quarantine", "Quarentena", "lock"),
     ("lab", "Sala de Análise", "flask"),
     ("recovery", "Recuperação", "lifebuoy"),
@@ -82,9 +89,20 @@ class MainWindow(QMainWindow):
         group = QButtonGroup(self)
         group.setExclusive(True)
         factories = {"dashboard": DashboardPage, "scan": ScanPage, "realtime": RealtimePage, "botnet": BotnetPage,
+                     "usb": UsbPage, "web": WebPage, "firewall": FirewallPage,
                      "quarantine": QuarantinePage, "lab": LabPage, "recovery": RecoveryPage,
                      "processes": ProcessesPage, "startup": StartupPage, "network": NetworkPage,
                      "history": HistoryPage, "settings": SettingsPage}
+        nav_box = QWidget()
+        nav_lay = QVBoxLayout(nav_box)
+        nav_lay.setContentsMargins(0, 0, 0, 0)
+        nav_lay.setSpacing(2)
+        nav_scroll = QScrollArea()
+        nav_scroll.setObjectName("navScroll")
+        nav_scroll.setWidgetResizable(True)
+        nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        nav_scroll.setFrameShape(QFrame.NoFrame)
+        nav_scroll.setWidget(nav_box)
         for key, title, ic in NAV:
             b = QPushButton(f"  {title}")
             b.setObjectName("nav")
@@ -94,12 +112,13 @@ class MainWindow(QMainWindow):
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(lambda _=False, k=key: self.go(k))
             group.addButton(b)
-            sv.addWidget(b)
+            nav_lay.addWidget(b)
             self.nav_buttons[key] = b
             page = factories[key](ctx)
             self.pages[key] = page
             self.stack.addWidget(page)
-        sv.addStretch(1)
+        nav_lay.addStretch(1)
+        sv.addWidget(nav_scroll, 1)
         self.rt_label = QLabel()
         self.rt_label.setObjectName("small")
         self.rt_label.setWordWrap(True)
@@ -111,6 +130,9 @@ class MainWindow(QMainWindow):
         ctx.bridge.navigate.connect(self._on_navigate)
         ctx.bridge.rt_event.connect(self._on_rt_event)
         ctx.bridge.botnet_event.connect(self._on_botnet_event)
+        ctx.bridge.usb_event.connect(self._on_usb_event)
+        ctx.bridge.script_event.connect(self._on_script_event)
+        ctx.bridge.boot_event.connect(self._on_boot_event)
         ctx.bridge.scan_finished.connect(self._on_scan_finished)
         ctx.bridge.scan_threat.connect(lambda r: self.statusBar().showMessage(f"Ameaça encontrada: {r.threat_name} — {r.path}", 8000))
         self._setup_tray()
@@ -128,7 +150,7 @@ class MainWindow(QMainWindow):
             ic = next(i for kk, _t, i in NAV if kk == k)
             b.setChecked(k == key)
             b.setIcon(icons.icon(ic, theme.ACCENT if k == key else theme.MUTED, 18))
-        if hasattr(page, "refresh") and key in ("dashboard", "quarantine", "settings", "realtime"):
+        if hasattr(page, "refresh") and key in ("dashboard", "quarantine", "settings", "realtime", "usb", "web"):
             page.refresh()
 
     def _on_navigate(self, key: str):
@@ -201,6 +223,43 @@ class MainWindow(QMainWindow):
         elif kind == "suspeito":
             self.notify("Comportamento suspeito de bot", f"{rep.name} (PID {rep.pid}): " + "; ".join(rep.reasons()[:2]),
                         critical=False)
+
+    def _on_usb_event(self, kind, data):
+        if kind == "inserted":
+            self.statusBar().showMessage(f"[Pen drive] {data.title()} conectado"
+                                         + (" — verificando…" if self.ctx.settings.usb_auto_scan else ""), 8000)
+        elif kind in ("threat", "finding"):
+            r = data[2] if kind == "finding" else data
+            self.notify(f"Pen drive: {r.threat_name}", f"{r.path}\nAção: {r.action}", critical=r.verdict == "malicioso")
+        elif kind == "done":
+            d, st = data
+            n = len(st.threats)
+            msg = f"{d.title()}: {st.files} arquivo(s) verificado(s), " + (f"{n} ameaça(s)" if n else "nenhuma ameaça")
+            self.statusBar().showMessage(f"[Pen drive] {msg}", 15000)
+            self.notify("Pen drive verificado", msg, critical=bool(n))
+
+    def _on_script_event(self, kind, r):
+        if kind == "threat":
+            self.notify(f"Script malicioso bloqueado: {r.threat_name}", f"{r.path[:160]}\nAção: {r.action}")
+            self.statusBar().showMessage(f"[Scripts] {r.threat_name} — {r.action}", 12000)
+        elif kind == "suspeito":
+            self.notify("Script suspeito", r.path[:200], critical=False)
+
+    def _on_boot_event(self, kind, data):
+        if kind == "blocked":
+            self.statusBar().showMessage(f"[Inicialização] {data['item'].get('name')} bloqueado — {data['reason']}",
+                                         12000)
+            self.notify("Programa bloqueado ao ligar", f"{data['item'].get('name')}: {data['reason']}",
+                        critical=data.get("verdict") == "malicioso")
+        elif kind == "boot_scan" and data == "done":
+            st = self.ctx.boot.boot_scan_state
+            self.statusBar().showMessage(f"[Inicialização] scan em segundo plano {st}", 15000)
+            if "0 ameaça" not in st:
+                self.notify("Scan de inicialização", st)
+        elif kind == "threat":
+            self.notify(f"Ameaça {data.verdict}: {data.threat_name}", f"{data.path}\nAção: {data.action}")
+        elif kind == "status" and isinstance(data, str) and data not in ("on", "off"):
+            self.statusBar().showMessage(data, 20000)
 
     def _on_rt_event(self, kind, data):
         if kind == "status":

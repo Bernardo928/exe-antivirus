@@ -147,13 +147,50 @@ def _desktop_exec(p: Path) -> str:
     return ""
 
 
+def _desktop_keys(p: Path) -> dict[str, str]:
+    out = {}
+    try:
+        for line in p.read_text("utf-8", "replace").splitlines():
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                out.setdefault(k.strip(), v.strip())
+    except OSError:
+        pass
+    return out
+
+
+def _desktop_disabled(p: Path) -> bool:
+    k = _desktop_keys(p)
+    return k.get("Hidden", "").lower() == "true" or k.get("X-GNOME-Autostart-enabled", "").lower() == "false"
+
+
+def _desktop_shown_here(p: Path) -> bool:
+    """Respeita OnlyShowIn/NotShowIn (itens de outros ambientes gráficos nunca rodam aqui)."""
+    k = _desktop_keys(p)
+    desk = {x for x in os.environ.get("XDG_CURRENT_DESKTOP", "").upper().split(":") if x}
+    only = {x for x in k.get("OnlyShowIn", "").upper().split(";") if x}
+    nots = {x for x in k.get("NotShowIn", "").upper().split(";") if x}
+    if only and desk and not (only & desk):
+        return False
+    if nots and desk and (nots & desk):
+        return False
+    return True
+
+
 def _linux_items() -> list[dict]:
     out = []
     home = Path.home()
-    for d, label in ((home / ".config" / "autostart", "Autostart (usuário)"), (Path("/etc/xdg/autostart"), "Autostart (sistema)")):
+    user_auto = home / ".config" / "autostart"
+    for d, label in ((user_auto, "Autostart (usuário)"), (Path("/etc/xdg/autostart"), "Autostart (sistema)")):
         for p in sorted(d.glob("*.desktop")) if d.exists() else []:
+            if _desktop_disabled(p):
+                continue
+            if d != user_auto and (user_auto / p.name).exists():
+                continue      # o arquivo do usuário com o mesmo nome substitui o do sistema
+            if not _desktop_shown_here(p):
+                continue
             out.append(_item(label, p.stem, _desktop_exec(p), str(p), "desktop",
-                             removable=os.access(p, os.W_OK)))
+                             removable=os.access(p, os.W_OK) or d != user_auto))
     for d, label in ((home / ".config" / "systemd" / "user", "systemd (usuário)"), (Path("/etc/systemd/system"), "systemd (sistema)")):
         for p in sorted(d.glob("*.service")) if d.exists() else []:
             if p.is_symlink() and str(os.readlink(p)).startswith("/dev/null"):
@@ -222,7 +259,7 @@ def list_items() -> list[dict]:
 def disable_item(item: dict) -> str:
     """Desativa um item de inicialização, guardando uma cópia de segurança para desfazer."""
     bdir = paths.sub_dir("startup_backup")
-    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     record = {"item": item, "date": ts}
     kind = item["kind"]
     if kind == "registro" and paths.IS_WINDOWS:
@@ -236,11 +273,19 @@ def disable_item(item: dict) -> str:
         hive, sub = mapping[label]
         with winreg.OpenKey(hive, sub, 0, winreg.KEY_SET_VALUE) as k:
             winreg.DeleteValue(k, name)
+        record["registry"] = [label, name, item["command"]]
     elif kind == "tarefa" and paths.IS_WINDOWS:
         r = subprocess.run(["schtasks", "/change", "/tn", item["name"], "/disable"], capture_output=True, text=True,
                            creationflags=0x08000000)
         if r.returncode != 0:
             raise OSError(r.stderr.strip() or "falha ao desativar a tarefa")
+    elif kind == "desktop" and not os.access(item["location"], os.W_OK) or (
+            kind == "desktop" and item["location"].startswith("/etc/xdg/autostart/")):
+        override = Path.home() / ".config" / "autostart" / Path(item["location"]).name
+        override.parent.mkdir(parents=True, exist_ok=True)
+        override.write_text("[Desktop Entry]\nType=Application\nName=" + item["name"] +
+                            "\nHidden=true\n# desativado pelo EXE Antivirus\n", "utf-8")
+        record["override"] = str(override)
     elif kind in ("arquivo", "desktop", "systemd"):
         src = item["location"]
         dst = bdir / f"{ts}-{Path(src).name}"
@@ -258,3 +303,60 @@ def disable_item(item: dict) -> str:
     (bdir / f"{ts}.json").write_text(json.dumps(record, ensure_ascii=False, indent=1), "utf-8")
     history.log("inicialização", f"Item de inicialização desativado: {item['name']}", item["location"])
     return ts
+
+
+_REG_KEYS = {"HKCU Run": ("HKEY_CURRENT_USER", r"Software\Microsoft\Windows\CurrentVersion\Run"),
+             "HKCU RunOnce": ("HKEY_CURRENT_USER", r"Software\Microsoft\Windows\CurrentVersion\RunOnce"),
+             "HKLM Run": ("HKEY_LOCAL_MACHINE", r"Software\Microsoft\Windows\CurrentVersion\Run"),
+             "HKLM RunOnce": ("HKEY_LOCAL_MACHINE", r"Software\Microsoft\Windows\CurrentVersion\RunOnce"),
+             "HKLM Run (32 bits)": ("HKEY_LOCAL_MACHINE", r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run")}
+
+
+def list_disabled() -> list[dict]:
+    """Itens desativados pelo antivírus (mais recentes primeiro): [{'id', 'date', 'item', ...}]."""
+    out = []
+    for f in paths.sub_dir("startup_backup").glob("*.json"):
+        try:
+            rec = json.loads(f.read_text("utf-8"))
+        except (OSError, ValueError):
+            continue
+        if rec.get("restored"):
+            continue
+        rec["id"] = f.stem
+        out.append(rec)
+    return sorted(out, key=lambda r: r.get("date", ""), reverse=True)
+
+
+def restore_item(record_id: str) -> None:
+    """Desfaz a desativação de um item de inicialização."""
+    f = paths.sub_dir("startup_backup") / f"{record_id}.json"
+    rec = json.loads(f.read_text("utf-8"))
+    item = rec["item"]
+    kind = item["kind"]
+    if rec.get("override"):
+        try:
+            os.remove(rec["override"])
+        except FileNotFoundError:
+            pass
+    elif kind == "registro" and paths.IS_WINDOWS:
+        import winreg
+        label, name, value = rec.get("registry") or [item["source"], item["name"], item["command"]]
+        hive_name, sub = _REG_KEYS[label]
+        with winreg.CreateKeyEx(getattr(winreg, hive_name), sub, 0, winreg.KEY_SET_VALUE) as k:
+            winreg.SetValueEx(k, name, 0, winreg.REG_SZ, value)
+    elif kind == "tarefa" and paths.IS_WINDOWS:
+        r = subprocess.run(["schtasks", "/change", "/tn", item["name"], "/enable"], capture_output=True, text=True,
+                           creationflags=0x08000000)
+        if r.returncode != 0:
+            raise OSError(r.stderr.strip() or "falha ao reativar a tarefa")
+    elif rec.get("backup"):
+        dst = item["location"]
+        Path(dst).parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(rec["backup"], dst)
+    elif kind == "cron" and rec.get("crontab") is not None:
+        subprocess.run(["crontab", "-"], input=rec["crontab"], text=True, check=True, timeout=5)
+    else:
+        raise OSError("Não há cópia de segurança para restaurar este item.")
+    rec["restored"] = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    f.write_text(json.dumps(rec, ensure_ascii=False, indent=1), "utf-8")
+    history.log("inicialização", f"Item de inicialização reativado: {item['name']}", item["location"])

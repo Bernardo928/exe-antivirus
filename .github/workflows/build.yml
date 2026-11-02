@@ -37,8 +37,17 @@ jobs:
       - name: Autoteste pelo código-fonte
         run: python main.py --selftest
 
-      - name: Compilar (PyInstaller)
-        run: python tools/build.py --onefile
+      - name: Inno Setup (Windows)
+        if: runner.os == 'Windows'
+        run: choco install innosetup -y --no-progress
+
+      - name: Compilar (PyInstaller + instalador .exe / AppImage)
+        shell: bash
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then python tools/build.py --onefile --installer
+          else python tools/build.py --onefile --appimage; fi
 
       - name: Testar executável compilado (Windows)
         if: runner.os == 'Windows'
@@ -53,6 +62,51 @@ jobs:
           $exe = Get-ChildItem dist\*-portatil.exe | Select-Object -First 1
           $p = Start-Process -FilePath $exe.FullName -ArgumentList "--selftest" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "autoteste do portátil falhou: $($p.ExitCode)" }
+
+      - name: Testar instalador (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $inst = Get-ChildItem dist\*-instalador.exe | Select-Object -First 1
+          $p = Start-Process $inst.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS="autostart,pslog,desktopicon"',"/LOG=$env:RUNNER_TEMP\instalacao.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\instalacao.log" -Tail 40; throw "instalação falhou: $($p.ExitCode)" }
+          $dir = "$env:ProgramFiles\EXE Antivirus"
+          if (!(Test-Path "$dir\ExeAntivirus.exe")) { throw "programa não foi instalado" }
+          if (!(Test-Path "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\EXE Antivirus\EXE Antivirus.lnk")) { throw "atalho do menu Iniciar não criado" }
+          $p = Start-Process "$dir\ExeAntivirus.exe" -ArgumentList '--selftest' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "autoteste do programa instalado falhou" }
+          schtasks /Query /TN "EXE Antivirus" /V /FO LIST
+          if ($LASTEXITCODE -ne 0) { throw "tarefa de inicialização não criada" }
+          $v = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging').EnableScriptBlockLogging
+          if ($v -ne 1) { throw "registro de scripts do PowerShell não ligado" }
+          Write-Host "Instalação OK — desinstalando"
+          Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          for ($i = 0; $i -lt 90 -and (Test-Path "$dir\ExeAntivirus.exe"); $i++) { Start-Sleep 1 }
+          if (Test-Path "$dir\ExeAntivirus.exe") { throw "desinstalação não removeu o programa" }
+          schtasks /Query /TN "EXE Antivirus" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "desinstalação não removeu a tarefa" }
+          $v = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging' -EA SilentlyContinue).EnableScriptBlockLogging
+          if ($v -eq 1) { throw "desinstalação não desligou o registro do PowerShell" }
+          Write-Host "Desinstalação OK"
+          $global:LASTEXITCODE = 0
+
+      - name: Testar AppImage (Linux)
+        if: runner.os == 'Linux'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          export EXEAV_DATA_DIR=$RUNNER_TEMP/exeav-appimage
+          A=$(ls dist/*.AppImage)
+          "$A" --selftest
+          "$A" --smoke-test dist/captura-appimage.png
+          export HOME=$RUNNER_TEMP/home && mkdir -p "$HOME"
+          "$A" --install-system --autostart
+          test -f "$HOME/.local/share/applications/exe-antivirus.desktop"
+          grep -q -- "--boot" "$HOME/.config/autostart/exe-antivirus.desktop"
+          grep -q "$A" "$HOME/.local/share/applications/exe-antivirus.desktop" || grep -q "AppImage" "$HOME/.local/share/applications/exe-antivirus.desktop"
+          "$A" --uninstall-system
+          test ! -f "$HOME/.local/share/applications/exe-antivirus.desktop"
+          test ! -f "$HOME/.config/autostart/exe-antivirus.desktop"
 
       - name: Testar executável compilado (Linux)
         if: runner.os == 'Linux'
@@ -69,5 +123,7 @@ jobs:
             dist/*.zip
             dist/*.tar.gz
             dist/*-portatil*
+            dist/*-instalador.exe
+            dist/*.AppImage
             dist/captura-*.png
           if-no-files-found: error

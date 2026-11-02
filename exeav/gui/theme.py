@@ -113,4 +113,12 @@ QMessageBox {{ background: {SURFACE}; }}
 QDialog {{ background: {SURFACE}; }}
 QGroupBox {{ border: 1px solid {BORDER}; border-radius: 12px; margin-top: 14px; padding: 14px 12px 12px 12px; background: {SURFACE}; font-weight: 600; }}
 QGroupBox::title {{ subcontrol-origin: margin; left: 14px; padding: 0 6px; color: {TEXT}; }}
+QPushButton#choice {{
+    text-align: left; padding: 12px 14px; border: 1px solid {BORDER}; border-radius: 12px;
+    background: {SURFACE2}; color: {TEXT}; font-weight: 500;
+}}
+QPushButton#choice:hover {{ border: 1px solid {ACCENT_HOVER}; }}
+QPushButton#choice:checked {{ border: 2px solid {ACCENT}; background: {SURFACE3}; font-weight: 600; }}
+QScrollArea#navScroll {{ background: transparent; border: none; }}
+QScrollArea#navScroll > QWidget > QWidget {{ background: transparent; }}
 """

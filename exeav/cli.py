@@ -21,6 +21,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--botnet", nargs="?", const=10, type=float, metavar="SEGUNDOS",
                    help="observa a rede por alguns segundos e mostra programas com comportamento de botnet (não age)")
     p.add_argument("--minimized", action="store_true", help="inicia minimizado na bandeja")
+    p.add_argument("--boot", action="store_true", help="aberto automaticamente ao ligar o computador")
+    p.add_argument("--install-system", action="store_true",
+                   help="integra ao sistema (inicialização automática, atalhos; usado pelos instaladores)")
+    p.add_argument("--autostart", action="store_true", help="com --install-system: iniciar junto com o sistema")
+    p.add_argument("--pslog", action="store_true",
+                   help="com --install-system (Windows): liga o registro de scripts do PowerShell")
+    p.add_argument("--boot-service", action="store_true",
+                   help="com --install-system (Linux, como root): serviço que reaplica o firewall a cada boot")
+    p.add_argument("--uninstall-system", action="store_true", help="desfaz tudo o que o antivírus mudou no sistema")
+    p.add_argument("--boot-tasks", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--smoke-test", metavar="PNG", help=argparse.SUPPRESS)
     p.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION}")
     return p
@@ -142,6 +152,20 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.selftest:
         return selftest()
+    if args.install_system:
+        from .system import install
+        for line in install.install(autostart_on=args.autostart, pslog=args.pslog, boot_service=args.boot_service):
+            print("OK", line)
+        return 0
+    if args.uninstall_system:
+        from .system import install
+        install.kill_other_instances()
+        for line in install.uninstall():
+            print("-", line)
+        return 0
+    if args.boot_tasks:
+        from .system import install
+        return install.boot_tasks()
     if args.botnet is not None:
         return botnet_check(args.botnet, args.json)
     if args.analyze:

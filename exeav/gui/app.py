@@ -50,16 +50,51 @@ def run(argv: list[str]) -> int:
             ctx.realtime.start()
         except Exception as e:  # nunca impedir a abertura do programa
             win.statusBar().showMessage(f"Falha ao iniciar a proteção em tempo real: {e}")
-    if ctx.settings.botnet_shield and os.environ.get("EXEAV_NO_REALTIME") != "1":
-        try:
-            ctx.botnet.start()
-        except Exception as e:
-            win.statusBar().showMessage(f"Falha ao iniciar o escudo anti-botnet: {e}")
+    if os.environ.get("EXEAV_NO_REALTIME") != "1":
+        start_services(ctx, win)
     win.pages["dashboard"].refresh()
     code = app.exec()
     ctx.shutdown()
     lock.unlock()
     return code
+
+
+def start_services(ctx, win) -> None:
+    """Liga os escudos configurados. Uma falha em um deles nunca impede os outros nem a abertura do programa."""
+    import threading
+
+    from .. import dnsguard, firewall
+    s = ctx.settings
+    for enabled, svc, name in ((s.botnet_shield, ctx.botnet, "escudo anti-botnet"),
+                               (s.usb_guard, ctx.usb, "proteção de pen drives"),
+                               (s.script_guard and s.realtime_enabled, ctx.scripts, "análise de scripts"),
+                               (s.boot_guard, ctx.boot, "proteção ao ligar")):
+        if not enabled:
+            continue
+        try:
+            svc.start()
+        except Exception as e:
+            win.statusBar().showMessage(f"Falha ao iniciar {name}: {e}")
+
+    def background():
+        try:
+            from ..system import install
+            if install.appimage_first_run():
+                ctx.bridge.boot_event.emit("status", "EXE Antivirus adicionado ao menu de aplicativos e à "
+                                                     "inicialização automática.")
+        except Exception:
+            pass
+        # regras do nftables/iptables somem ao reiniciar; a proteção ao ligar reaplica no boot, e aqui
+        # garantimos o mesmo para quem abre o antivírus depois (independente do escudo anti-botnet)
+        if not s.boot_guard:
+            try:
+                firewall.reapply()
+            except Exception:
+                pass
+        msg = dnsguard.on_app_start(s.dns_blocked_sites)
+        if msg:
+            ctx.bridge.boot_event.emit("status", msg)
+    threading.Thread(target=background, daemon=True, name="startup-tasks").start()
 
 
 def check_indicator_qss() -> str:

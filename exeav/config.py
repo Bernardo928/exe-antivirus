@@ -51,6 +51,18 @@ class Settings:
     botnet_auto_kill: bool = True
     botnet_firewall_block: bool = True
     botnet_c2_url: str = "https://feodotracker.abuse.ch/downloads/ipblocklist.txt"
+    usb_guard: bool = True
+    usb_auto_scan: bool = True
+    usb_fix_shortcut_virus: bool = True
+    script_guard: bool = True
+    dns_profile: str = ""                    # perfil do DNS da Mullvad aplicado ("" = DNS original)
+    dns_blocked_sites: list[str] = field(default_factory=list)
+    boot_guard: bool = True
+    boot_block_mode: str = "desconhecidos"   # desconhecidos | todos | avisar
+    boot_scan: bool = True
+    boot_scan_delay: int = 90                # segundos depois de ligar
+    startup_policy: dict = field(default_factory=dict)   # chave do item → "liberado" | "bloqueado"
+    last_boot_handled: float = 0.0
     auto_action: str = "quarantine"          # quarantine | notify
     sensitivity: str = "media"               # baixa | media | alta
     scan_archives: bool = True
@@ -85,6 +97,12 @@ class Settings:
             self.sensitivity = "media"
         if self.auto_action not in ("quarantine", "notify"):
             self.auto_action = "quarantine"
+        if self.boot_block_mode not in ("desconhecidos", "todos", "avisar"):
+            self.boot_block_mode = "desconhecidos"
+        clamp("boot_scan_delay", 0, 3600)
+        if not isinstance(self.startup_policy, dict):
+            self.startup_policy = {}
+        self.dns_blocked_sites = [d for d in self.dns_blocked_sites if isinstance(d, str) and d.strip()]
         if self.scheduled_scan_type not in ("quick", "full"):
             self.scheduled_scan_type = "quick"
         if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", self.scheduled_scan_time or ""):

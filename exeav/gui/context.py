@@ -7,12 +7,15 @@ from PySide6.QtCore import QObject, Signal
 
 from .. import config, history
 from ..botnet import BotnetShield
+from ..bootguard import BootGuard
 from ..engine.engine import Engine
 from ..engine.signatures import SignatureDB
 from ..lab import AnalysisLab
 from ..quarantine import Quarantine
 from ..realtime import RealtimeProtection
 from ..scanner import ScanCache, Scanner
+from ..scriptguard import ScriptGuard
+from ..usbguard import UsbGuard
 
 
 class Bridge(QObject):
@@ -22,6 +25,9 @@ class Bridge(QObject):
     scan_finished = Signal(object)
     rt_event = Signal(str, object)
     botnet_event = Signal(str, object)
+    usb_event = Signal(str, object)
+    script_event = Signal(str, object)
+    boot_event = Signal(str, object)
     history_event = Signal(str, str, str, str)
     quarantine_changed = Signal()
     lab_changed = Signal(str)
@@ -41,6 +47,10 @@ class AppContext:
         self.lab = AnalysisLab(self.engine)
         self.realtime = RealtimeProtection(self.engine, self.quarantine, self._rt_cb, self.cache)
         self.botnet = BotnetShield(self.engine, self.quarantine, self._botnet_cb)
+        self.usb = UsbGuard(self.engine, self.quarantine, self._mk_cb("usb_event", ("threat", "finding")), self.cache)
+        self.scripts = ScriptGuard(self.engine, self.quarantine, self._mk_cb("script_event", ("threat",)), self.lab)
+        self.boot = BootGuard(self.engine, self.quarantine, self._mk_cb("boot_event", ("blocked", "threat")),
+                              self.cache)
         self.scanner: Scanner | None = None
         self._scan_thread: threading.Thread | None = None
         history.add_listener(lambda *a: self.bridge.history_event.emit(*a))
@@ -49,6 +59,15 @@ class AppContext:
         self.bridge.botnet_event.emit(kind, data)
         if kind == "botnet":
             self.bridge.quarantine_changed.emit()
+
+    def _mk_cb(self, signal: str, quarantine_kinds: tuple):
+        sig = getattr(self.bridge, signal)
+
+        def cb(kind: str, data) -> None:
+            sig.emit(kind, data)
+            if kind in quarantine_kinds:
+                self.bridge.quarantine_changed.emit()
+        return cb
 
     def _rt_cb(self, kind: str, data) -> None:
         self.bridge.rt_event.emit(kind, data)
@@ -89,7 +108,7 @@ class AppContext:
 
     def shutdown(self) -> None:
         self.stop_scan()
-        for svc in (self.realtime, self.botnet):
+        for svc in (self.realtime, self.botnet, self.usb, self.scripts, self.boot):
             try:
                 if svc.running:
                     svc.stop()
@@ -97,5 +116,10 @@ class AppContext:
                 pass
         try:
             self.cache.flush()
+        except Exception:
+            pass
+        try:
+            from .. import dnsguard
+            dnsguard.on_app_exit()
         except Exception:
             pass

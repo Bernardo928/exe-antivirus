@@ -7,6 +7,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QListWidget,
                                QVBoxLayout, QWidget)
 
+from ... import paths
 from .. import theme
 from ..widgets import Badge, Card, DataTable, PageHeader, StatCard, button, label
 
@@ -79,6 +80,25 @@ class RealtimePage(QWidget):
         self.dirs.setMinimumHeight(150)
         dirs.lay.addWidget(self.dirs)
         mid.addWidget(dirs, 0, 1)
+
+        sc = Card()
+        sh = QHBoxLayout()
+        sh.addWidget(label("Análise de scripts por dentro", "sectionTitle"))
+        self.sc_badge = Badge("", theme.MUTED)
+        sh.addWidget(self.sc_badge)
+        sh.addStretch(1)
+        self.c_scripts = QCheckBox("Ativada")
+        self.c_scripts.setChecked(s.script_guard)
+        self.c_scripts.toggled.connect(self.toggle_scripts)
+        sh.addWidget(self.c_scripts)
+        self.b_pslog = button("Ligar registro do PowerShell", "terminal", "primary")
+        self.b_pslog.clicked.connect(self.enable_pslog)
+        self.b_pslog.setVisible(paths.IS_WINDOWS)
+        sh.addWidget(self.b_pslog)
+        sc.lay.addLayout(sh)
+        self.sc_info = label("", "small", wrap=True)
+        sc.lay.addWidget(self.sc_info)
+        mid.addWidget(sc, 1, 0, 1, 2)
         root.addLayout(mid)
 
         feed = Card()
@@ -90,6 +110,8 @@ class RealtimePage(QWidget):
         root.addWidget(feed, 1)
 
         ctx.bridge.rt_event.connect(self.on_event)
+        ctx.bridge.script_event.connect(lambda k, d: self.on_event("threat", d) if k in ("threat", "suspeito")
+                                        else self.refresh_scripts())
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh_stats)
         self._timer.start(1500)
@@ -113,6 +135,46 @@ class RealtimePage(QWidget):
             self.ctx.settings.realtime_enabled = True
         self.ctx.apply_settings()
         self.refresh()
+
+    def toggle_scripts(self, on: bool):
+        g = self.ctx.scripts
+        if on and not g.running:
+            g.start()
+        elif not on and g.running:
+            g.stop()
+        self.ctx.settings.script_guard = on
+        self.ctx.apply_settings()
+        self.refresh_scripts()
+
+    def enable_pslog(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        from ... import scriptguard
+        try:
+            scriptguard.enable_logging(True)
+            QMessageBox.information(self, "PowerShell", "Registro de blocos de script ligado. A partir de agora o "
+                                    "antivírus vê o código do PowerShell já decodificado, mesmo quando o vírus "
+                                    "tenta escondê-lo.")
+        except OSError as e:
+            QMessageBox.warning(self, "PowerShell", f"É preciso executar o antivírus como administrador.\n\n{e}")
+        self.refresh_scripts()
+
+    def refresh_scripts(self):
+        g = self.ctx.scripts
+        on = g.running
+        self.sc_badge.set("Ativa" if on else "Desligada", theme.SUCCESS if on else theme.DANGER)
+        txt = (f"{g.blocks_analyzed} trecho(s) de código analisado(s), {g.threats_blocked} bloqueado(s). "
+               "Olha o código que realmente está rodando: ")
+        if paths.IS_WINDOWS:
+            ready = g.powershell_ready
+            self.b_pslog.setVisible(not ready)
+            txt += ("PowerShell decodificado pelo próprio Windows (registro de blocos de script "
+                    + ("ligado" if ready else "DESLIGADO — clique em ligar; sem ele só os blocos que o Windows "
+                       "já considera suspeitos são vistos") + ") e scripts abertos por wscript/cscript/mshta.")
+        else:
+            txt += ("scripts que o shell está executando — inclusive os que o vírus apagou do disco para se "
+                    "esconder — e downloads executados direto (curl | sh).")
+        self.sc_info.setText(txt)
 
     def _restart_if_running(self):
         if self.ctx.realtime.running:
@@ -157,6 +219,7 @@ class RealtimePage(QWidget):
         self.s_procs.set(rt.processes_checked)
         self.s_block.set(rt.threats_blocked)
         self.s_dirs.set(len(rt.watched) if rt.running else 0)
+        self.refresh_scripts()
 
     def refresh(self):
         rt = self.ctx.realtime

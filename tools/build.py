@@ -1,7 +1,9 @@
 """Compila o EXE Antivirus com PyInstaller (Windows ou Linux).
 
-Uso:  python tools/build.py            -> pasta dist/ExeAntivirus (recomendado) + pacote compactado
-      python tools/build.py --onefile  -> também gera um executável único
+Uso:  python tools/build.py              -> pasta dist/ExeAntivirus (recomendado) + pacote compactado
+      python tools/build.py --onefile    -> também gera um executável único (portátil)
+      python tools/build.py --installer  -> Windows: também gera o instalador .exe (Inno Setup)
+      python tools/build.py --appimage   -> Linux: também gera o .AppImage
 """
 import os
 import platform
@@ -65,6 +67,61 @@ def write_version_file():
 """, "utf-8")
 
 
+APPIMAGETOOL_URL = "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+
+
+def build_appimage(version: str, arch: str) -> Path:
+    """AppImage: um único arquivo que roda em qualquer distribuição Linux; no primeiro uso ele se adiciona
+    ao menu de aplicativos e à inicialização automática."""
+    import urllib.request
+    appdir = ROOT / "build" / "AppDir"
+    shutil.rmtree(appdir, ignore_errors=True)
+    (appdir / "usr" / "lib").mkdir(parents=True)
+    shutil.copytree(ROOT / "dist" / "ExeAntivirus", appdir / "usr" / "lib" / "ExeAntivirus", symlinks=True)
+    apprun = appdir / "AppRun"
+    apprun.write_text('#!/bin/sh\nHERE="$(dirname "$(readlink -f "$0")")"\n'
+                      'exec "$HERE/usr/lib/ExeAntivirus/ExeAntivirus" "$@"\n', "utf-8")
+    os.chmod(apprun, 0o755)
+    (appdir / "exe-antivirus.desktop").write_text(
+        "[Desktop Entry]\nType=Application\nName=EXE Antivirus\nGenericName=Antivirus\n"
+        "Comment=Protecao contra virus, botnets, ransomware e sites maliciosos\nExec=ExeAntivirus\n"
+        "Icon=exe-antivirus\nTerminal=false\nCategories=System;Security;\n", "utf-8")
+    shutil.copy(ROOT / "assets" / "icon.png", appdir / "exe-antivirus.png")
+    shutil.copy(ROOT / "assets" / "icon.png", appdir / ".DirIcon")
+    tool = ROOT / "build" / "appimagetool.AppImage"
+    if not tool.exists():
+        print("baixando appimagetool…")
+        urllib.request.urlretrieve(APPIMAGETOOL_URL, tool)
+        os.chmod(tool, 0o755)
+    out = ROOT / "dist" / f"ExeAntivirus-{version}-linux-{arch}.AppImage"
+    env = dict(os.environ, ARCH="x86_64" if arch == "x64" else arch, APPIMAGE_EXTRACT_AND_RUN="1")
+    print("+ appimagetool", appdir, out)
+    subprocess.check_call([str(tool), "--no-appstream", str(appdir), str(out)], cwd=ROOT, env=env)
+    return out
+
+
+def find_iscc() -> str | None:
+    cands = [shutil.which("iscc"), shutil.which("ISCC")]
+    for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles"), os.environ.get("LOCALAPPDATA")):
+        if base:
+            cands.append(str(Path(base) / "Inno Setup 6" / "ISCC.exe"))
+            cands.append(str(Path(base) / "Programs" / "Inno Setup 6" / "ISCC.exe"))
+    return next((c for c in cands if c and os.path.isfile(c)), None)
+
+
+def build_installer(version: str) -> Path:
+    """Instalador do Windows (Inno Setup): Arquivos de Programas, menu Iniciar, atalho, proteção desde a
+    inicialização e desinstalador que desfaz tudo."""
+    iscc = find_iscc()
+    if not iscc:
+        raise SystemExit("Inno Setup não encontrado (instale com: choco install innosetup)")
+    run([iscc, f"/DAppVersion={version}", str(ROOT / "packaging" / "windows" / "ExeAntivirus.iss")])
+    out = ROOT / "dist" / f"ExeAntivirus-{version}-windows-x64-instalador.exe"
+    if not out.exists():
+        raise SystemExit("o instalador não foi gerado")
+    return out
+
+
 def main():
     onefile = "--onefile" in sys.argv
     run([sys.executable, ROOT / "tools" / "build_rules.py"])
@@ -89,6 +146,10 @@ def main():
             for p in pkg_dir.rglob("*"):
                 z.write(p, Path("ExeAntivirus") / p.relative_to(pkg_dir))
     print("pacote:", out)
+    if "--installer" in sys.argv and IS_WIN:
+        print("instalador:", build_installer(VERSION))
+    if "--appimage" in sys.argv and not IS_WIN:
+        print("AppImage:", build_appimage(VERSION, arch))
     if onefile:
         run(pyinstaller_args(True))
         single = ROOT / "dist" / "onefile" / ("ExeAntivirus.exe" if IS_WIN else "ExeAntivirus")

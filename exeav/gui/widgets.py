@@ -144,6 +144,7 @@ class PageHeader(QWidget):
         h.addLayout(v, 1)
         self.right = QHBoxLayout()
         self.right.setSpacing(8)
+        self.right.setAlignment(Qt.AlignVCenter)
         h.addLayout(self.right)
 
 
@@ -176,6 +177,9 @@ class StatCard(QFrame):
 class Badge(QLabel):
     def __init__(self, text: str = "", color: str = theme.SUCCESS):
         super().__init__(text)
+        # não estica na vertical quando o subtítulo do cabeçalho quebra em duas linhas
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.setAlignment(Qt.AlignCenter)
         self.set(text, color)
 
     def set(self, text: str, color: str) -> None:

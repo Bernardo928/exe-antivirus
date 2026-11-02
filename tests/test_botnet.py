@@ -180,8 +180,8 @@ def test_firewall_refuses_dangerous_targets():
             firewall.block(bad, "teste")
 
 
-@pytest.mark.skipif(not (sys.platform.startswith("linux") and shutil.which("nft") and os.geteuid() == 0),
-                    reason="requer Linux com nftables e root")
+@pytest.mark.skipif(not (sys.platform.startswith("linux") and os.geteuid() == 0 and firewall.backend()),
+                    reason="requer Linux com firewall e root")
 def test_firewall_block_linux_real():
     ip = "203.0.113.77"
 
@@ -196,17 +196,16 @@ def test_firewall_block_linux_real():
             return time.time() - t < 1.5  # recusado na hora pelo firewall (sem bloqueio: espera o tempo limite)
         finally:
             s.close()
-    if not shutil.which("nft") or subprocess.run(["nft", "list", "tables"], capture_output=True).returncode:
+    if firewall.backend() == "nft" and subprocess.run(["nft", "list", "tables"], capture_output=True).returncode:
         pytest.skip("nftables sem permissão")
     assert firewall.block(ip, "teste")
     try:
         assert ip in firewall.blocked()
-        assert ip in subprocess.run(["nft", "list", "table", "inet", "exeav"], capture_output=True, text=True).stdout
         assert connect_fast_fails()
     finally:
         firewall.unblock(ip)
     assert ip not in firewall.blocked()
-    assert ip not in subprocess.run(["nft", "list", "table", "inet", "exeav"], capture_output=True, text=True).stdout
+    assert not connect_fast_fails()
 
 
 @pytest.mark.skipif(not sys.platform.startswith("win"), reason="somente Windows")

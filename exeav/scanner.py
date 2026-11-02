@@ -14,9 +14,10 @@ from . import config, history, paths
 from .engine.engine import Engine
 from .engine.models import CLEAN, ScanResult
 
-QUICK, FULL, CUSTOM = "quick", "full", "custom"
+QUICK, FULL, CUSTOM, USB, BOOT = "quick", "full", "custom", "usb", "boot"
 BIG_FILE = 32 * 1024 * 1024
-KIND_NAMES = {QUICK: "Scan rápido", FULL: "Scan completo", CUSTOM: "Scan personalizado"}
+KIND_NAMES = {QUICK: "Scan rápido", FULL: "Scan completo", CUSTOM: "Scan personalizado", USB: "Scan de pen drive",
+              BOOT: "Scan de inicialização"}
 
 PSEUDO_FS = {"proc", "sysfs", "devtmpfs", "devpts", "cgroup", "cgroup2", "securityfs", "pstore", "bpf",
              "tracefs", "debugfs", "mqueue", "hugetlbfs", "fusectl", "configfs", "autofs", "binfmt_misc",
@@ -30,8 +31,31 @@ LINUX_SKIP = ("/proc", "/sys", "/dev", "/run/user", "/run/lock", "/snap", "/var/
 _child_engine = None
 
 
-def _child_init(settings_dict: dict) -> None:
+def lower_priority(pid: int | None = None) -> None:
+    """Prioridade baixa de CPU e disco (varredura em segundo plano não pode deixar o PC lento)."""
+    try:
+        import psutil
+        p = psutil.Process(pid or os.getpid())
+        if paths.IS_WINDOWS:
+            p.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+            try:
+                p.ionice(psutil.IOPRIO_LOW)
+            except Exception:
+                pass
+        else:
+            p.nice(max(p.nice(), 10))
+            try:
+                p.ionice(psutil.IOPRIO_CLASS_IDLE)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _child_init(settings_dict: dict, low_priority: bool = False) -> None:
     global _child_engine
+    if low_priority:
+        lower_priority()
     from .engine.engine import Engine as _E
     s = config.Settings()
     for k, v in settings_dict.items():
@@ -220,8 +244,9 @@ class Scanner:
     """Executa uma varredura em threads. Callbacks são chamados das threads de trabalho."""
 
     def __init__(self, engine: Engine, kind: str, targets: list[str], on_threat=None, on_progress=None,
-                 cache: ScanCache | None = None, max_depth: int | None = None):
+                 cache: ScanCache | None = None, max_depth: int | None = None, low_priority: bool = False):
         self.engine = engine
+        self.low_priority = low_priority
         self.settings = engine.settings
         self.kind = kind
         self.targets = targets
@@ -253,7 +278,7 @@ class Scanner:
             from dataclasses import asdict
             ctx = multiprocessing.get_context("spawn")
             return ProcessPoolExecutor(max_workers=n, mp_context=ctx, initializer=_child_init,
-                                       initargs=(asdict(self.settings),))
+                                       initargs=(asdict(self.settings), self.low_priority))
         except Exception:
             return None
 
@@ -314,6 +339,8 @@ class Scanner:
     def run(self) -> ScanStats:
         history.log("scan", f"{KIND_NAMES.get(self.kind, 'Scan')} iniciado", "; ".join(self.targets[:5]))
         n = self.settings.scan_threads or min(8, max(2, (os.cpu_count() or 2)))
+        if self.low_priority:
+            n = max(1, n // 2)  # segundo plano: metade dos núcleos
         self._pool_n = n
         self._pool = self._make_pool(n)
         # com processos, mais threads mantêm todos os núcleos ocupados enquanto outras esperam E/S

@@ -132,3 +132,20 @@ class Exclusions:
 
 
 norm = _norm
+
+
+def launcher() -> list[str]:
+    """Comando para abrir o antivírus de fora (atalhos, inicialização automática, tarefas agendadas).
+    No AppImage o executável fica num ponto de montagem temporário: o caminho estável é $APPIMAGE."""
+    appimage = os.environ.get("APPIMAGE")
+    if appimage and os.path.isfile(appimage):
+        return [appimage]
+    if IS_FROZEN:
+        return [sys.executable]
+    main = Path(__file__).resolve().parent.parent / "main.py"
+    exe = sys.executable
+    if IS_WINDOWS and exe.lower().endswith("python.exe"):
+        cand = exe[:-10] + "pythonw.exe"
+        if os.path.isfile(cand):
+            exe = cand
+    return [exe, str(main)]

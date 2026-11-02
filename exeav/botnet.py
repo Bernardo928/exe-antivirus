@@ -230,11 +230,6 @@ class BotnetShield:
         if self.running:
             return
         self._stop.clear()
-        if self.settings.botnet_firewall_block and not self.dry_run:
-            try:
-                firewall.reapply()
-            except Exception:
-                pass
         self._thread = threading.Thread(target=self._loop, daemon=True, name="anti-botnet")
         self._thread.start()
         history.log("anti-botnet", "Escudo anti-botnet ativado")
