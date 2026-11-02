@@ -263,7 +263,7 @@ def test_canaries_created_and_tripped(tmp_path):
     assert not canary.tripped(p, "apagado")                     # apagar sozinho não dispara bloqueio
     canary.ensure([str(docs)])
     assert not canary.tripped(p, "modificado")                  # recriada
-    assert canary.remove_all() == 2 and not os.listdir(docs)
+    assert canary.remove_all() >= 2 and not os.listdir(docs)   # remove estas e as de outros testes
 
 
 @pytest.mark.skipif(not LINUX, reason="simulação de ataque com processo no Linux")
