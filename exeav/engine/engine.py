@@ -137,7 +137,11 @@ class Engine:
         hit = self.sigdb.lookup(sha256, md5, sha1)
         if not hit and depth == 0:
             from .. import intel
-            if intel.hash_known(sha256):
+            try:
+                known = intel.hash_known(sha256)
+            except Exception:  # noqa: BLE001 — inteligência indisponível não pode impedir a análise
+                known = False
+            if known:
                 hit = ("ThreatFox.KnownMalware", "ThreatFox (abuse.ch)")
         if hit:
             inds.append(Indicator(id="sig.hash", name=f"Malware conhecido: {hit[0]}", category="Assinatura",
@@ -161,7 +165,10 @@ class Engine:
         if depth == 0 and (ftype in ("script", "html", "ole", "ooxml", "pdf", "rtf", "lnk", "text")
                            or filetype.is_executable_type(ftype)):
             from .. import intel
-            hosts = intel.content_hits(data)
+            try:
+                hosts = intel.content_hits(data)
+            except Exception:  # noqa: BLE001
+                hosts = []
             if hosts:
                 inds.append(Indicator(
                     id="intel.malicious_host", name="Cita endereço de infraestrutura maliciosa conhecida",

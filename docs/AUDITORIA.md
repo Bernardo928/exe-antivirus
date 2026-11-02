@@ -53,4 +53,6 @@ teste ao vivo ou medição). Ter uma classe ou um botão com o nome não basta.
 | Malware desligando a proteção editando `settings.json` | **Detectado agora** (autoproteção) com restauração |
 | Apagar rastros no histórico | **Detectado agora** (encadeamento por hash + cabeça gravada à parte) |
 | Exclusão de pasta inteira usada para esconder malware | Exclusões novas são por conteúdo; exclusões por pasta antigas continuam funcionando (compatibilidade) |
+| Arquivo malformado derrubando o processo de análise fazia a varredura **descartar outros arquivos** em análise ao mesmo tempo (inclusive ameaças) — falha intermitente, ~30 % das execuções do teste de estresse | **Corrigido** (achado pelo CI): reanálise isolada por arquivo + limpeza dos processos lida antes do encerramento; 0 falhas em 40 execuções; a varredura agora registra cada arquivo ignorado e o motivo |
+| Banco SQLite "em uso" (vários processos abrindo ao mesmo tempo) era tratado como **corrompido** e renomeado — decisões do usuário podiam sumir | **Corrigido**: só corrupção real recria o banco; "em uso" espera e tenta de novo; falha no banco de exclusões nunca desliga a detecção |
 | Processo com privilégio de administrador adulterando o antivírus | **Não mitigável sem componente de kernel** — documentado |

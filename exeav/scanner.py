@@ -136,6 +136,7 @@ class ScanStats:
     walking_done: bool = False
     cancelled: bool = False
     errors: int = 0
+    skipped_items: list = field(default_factory=list)    # (arquivo, motivo) — transparência do que não foi analisado
 
     @property
     def elapsed(self) -> float:
@@ -322,8 +323,11 @@ class Scanner:
         except FutureTimeout:
             return ScanResult(path=path, skipped=True, error="Tempo de análise esgotado (arquivo gigantesco ou malformado)")
         finally:
-            procs = list(getattr(ex, "_processes", {}).values() or [])
-            ex.shutdown(wait=False, cancel_futures=True)
+            procs = list((getattr(ex, "_processes", None) or {}).values())
+            try:
+                ex.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
             for p in procs:
                 try:
                     p.kill()
@@ -334,11 +338,13 @@ class Scanner:
         with self._lock:
             if self._pool is not broken or self._stop.is_set():
                 return
+            # a lista de processos precisa ser lida ANTES do shutdown (depois ela vira None)
+            procs = list((getattr(broken, "_processes", None) or {}).values())
             try:
                 broken.shutdown(wait=False, cancel_futures=True)
             except Exception:
                 pass
-            for p in list(getattr(broken, "_processes", {}).values() or []):
+            for p in procs:
                 try:
                     p.kill()  # processo travado continuaria consumindo CPU/memória
                 except Exception:
@@ -480,6 +486,8 @@ class Scanner:
                     self.stats.from_cache += 1
                 elif res.skipped:
                     self.stats.skipped += 1
+                    if len(self.stats.skipped_items) < 1000:
+                        self.stats.skipped_items.append((item, res.error))
                 if res.is_threat:
                     self.stats.threats.append(res)
             if res.is_threat:
